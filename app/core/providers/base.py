@@ -112,7 +112,9 @@ class STTProvider(ABC):
     name: str
 
     @abstractmethod
-    async def transcribe(self, audio: bytes, filename: str) -> Transcript: ...
+    async def transcribe(
+        self, audio: bytes, filename: str, language: str | None = None
+    ) -> Transcript: ...
 
 
 class LLMProvider(ABC):

@@ -53,15 +53,44 @@ def test_одни_знаки_препинания_отсекаются():
         ensure_recognized(Transcript(text="... !", language="chinese"))
 
 
-def test_подсказка_распознавания_двуязычная():
+def test_подсказка_уходит_в_запрос_и_она_двуязычная():
     """Регрессия: подсказка на одном русском уводит 你好 в «Ни хао».
 
-    Проверено замером на живой записи — с русской подсказкой сервис возвращал
-    кириллическую транслитерацию и язык russian.
+    Проверяем тело запроса, а не константу рядом: в прошлый раз константу
+    поправили, а литерал внутри вызова остался прежним, и зелёный тест
+    прикрывал мёртвый фикс.
     """
-    from app.core.providers.stt.openai_whisper import PROMPT_HINT
+    from app.config import Settings
+    from app.core.providers.stt.openai_whisper import OpenAIWhisperSTT
 
-    есть_иероглифы = any("一" <= ch <= "鿿" for ch in PROMPT_HINT)
-    есть_кириллица = any("а" <= ch.lower() <= "я" for ch in PROMPT_HINT)
-    assert есть_иероглифы, "в подсказке нет иероглифов — китайский уедет в кириллицу"
-    assert есть_кириллица, "в подсказке нет кириллицы — русская речь будет распознаваться хуже"
+    stt = OpenAIWhisperSTT(
+        Settings(
+            openai_api_key="sk-test",
+            bot_token="123:AAtest",
+            database_url="postgresql+asyncpg://u:p@localhost/db",
+            redis_url="redis://localhost:6379/5",
+        )  # type: ignore[call-arg]
+    )
+    подсказка = stt._request_data(None)["prompt"]
+    assert any(
+        "一" <= ch <= "鿿" for ch in подсказка
+    ), "нет иероглифов — китайский уедет в кириллицу"
+    assert any(
+        "а" <= ch.lower() <= "я" for ch in подсказка
+    ), "нет кириллицы — русский распознается хуже"
+
+
+def test_принудительный_язык_попадает_в_запрос():
+    from app.config import Settings
+    from app.core.providers.stt.openai_whisper import OpenAIWhisperSTT
+
+    stt = OpenAIWhisperSTT(
+        Settings(
+            openai_api_key="sk-test",
+            bot_token="123:AAtest",
+            database_url="postgresql+asyncpg://u:p@localhost/db",
+            redis_url="redis://localhost:6379/5",
+        )  # type: ignore[call-arg]
+    )
+    assert "language" not in stt._request_data(None)
+    assert stt._request_data("zh")["language"] == "zh"

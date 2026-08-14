@@ -22,23 +22,40 @@ class OpenAIWhisperSTT(STTProvider):
         self._model = settings.whisper_model
         self._timeout = settings.provider_timeout
 
-    async def transcribe(self, audio: bytes, filename: str) -> Transcript:
-        async with call_logged(self.name, "transcribe", объём_запроса_байт=len(audio)) as details:
+    def _request_data(self, language: str | None) -> dict[str, str]:
+        """Тело запроса отдельным методом, чтобы тест проверял то, что реально уходит.
+
+        Раньше подсказка жила литералом внутри вызова, а тест сверялся с
+        константой рядом — константу поправили, литерал остался прежним, и
+        зелёный тест прикрывал мёртвый фикс.
+        """
+        data = {
+            "model": self._model,
+            # Подсказка обязана быть ДВУЯЗЫЧНОЙ: на одном русском она уводит
+            # распознавание в кириллицу, и 你好 приходит как «Ни хао».
+            "prompt": PROMPT_HINT,
+            "temperature": "0",
+            "response_format": "verbose_json",
+        }
+        # Язык не фиксируем по умолчанию — в диалоге он меняется от реплики к
+        # реплике. Принудительный передаётся, когда круг проверяет китайскую
+        # догадку вторым проходом.
+        if language:
+            data["language"] = language
+        return data
+
+    async def transcribe(
+        self, audio: bytes, filename: str, language: str | None = None
+    ) -> Transcript:
+        async with call_logged(
+            self.name, "transcribe", объём_запроса_байт=len(audio), язык=language or "авто"
+        ) as details:
             client = get_client()
             response = await client.post(
                 API_URL,
                 headers={"Authorization": f"Bearer {self._key}"},
                 files={"file": (filename, audio, "audio/ogg")},
-                data={
-                    "model": self._model,
-                    # Китайский и русский в одном диалоге: язык не фиксируем,
-                    # пусть определяет сам. Но подсказкой сдвигаем в нужную
-                    # сторону — без неё на тихих фрагментах сервис уходит
-                    # в японский и выдумывает текст.
-                    "prompt": "Это разговорная запись на китайском или русском языке.",
-                    "temperature": "0",
-                    "response_format": "verbose_json",
-                },
+                data=self._request_data(language),
             )
             details["http_код"] = response.status_code
             details["объём_ответа_байт"] = len(response.content)

@@ -1,0 +1,24 @@
+# доступы, никогда не коммитить
+dostupi.txt
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# данные и артефакты
+*.ogg
+*.mp3
+*.wav
+media/
+logs/
+*.log

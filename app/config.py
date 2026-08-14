@@ -1,0 +1,111 @@
+"""Конфигурация приложения. Всё читается из переменных окружения.
+
+При отсутствии обязательной переменной приложение падает на старте с внятным
+сообщением на русском, а не позже, где-нибудь в середине голосового круга.
+"""
+
+from __future__ import annotations
+
+import sys
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import Field, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Человеческие названия переменных для сообщения об ошибке.
+FIELD_TITLES: dict[str, str] = {
+    "bot_token": "BOT_TOKEN — токен Telegram-бота от @BotFather",
+    "database_url": "DATABASE_URL — строка подключения к postgres (postgresql+asyncpg://...)",
+    "redis_url": "REDIS_URL — строка подключения к redis (redis://host:port/номер_базы)",
+}
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # --- окружение ---
+    env: Literal["dev", "prod"] = "dev"
+    log_level: str = "INFO"
+    log_format: Literal["console", "json"] = "console"
+
+    # --- обязательные ---
+    # min_length=1: пустая переменная в .env — ошибка более частая, чем забытая,
+    # и молча стартовать с пустым токеном нельзя.
+    bot_token: str = Field(min_length=1)
+    database_url: str = Field(min_length=1)
+    redis_url: str = Field(min_length=1)
+
+    # --- redis ---
+    redis_prefix: str = "china:"
+
+    # --- api ---
+    api_host: str = "0.0.0.0"
+    api_port: int = 8080
+
+    # --- выбор провайдеров (этап 1 и дальше) ---
+    llm_provider: str = "openrouter"
+    stt_provider: str = "openai_whisper"
+    tts_provider: str = "fish"
+    pronunciation_provider: str = "speechsuper"
+
+    # --- ключи внешних сервисов, на этапе 0 не обязательны ---
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "openai/gpt-4o-mini"
+    openai_api_key: str | None = None
+    fish_api_key: str | None = None
+    fish_model: str = "s1"
+    speechsuper_app_key: str | None = None
+    speechsuper_secret_key: str | None = None
+    lavatop_api_key: str | None = None
+
+    # --- админы ---
+    admin_ids: str = ""
+
+    @property
+    def is_dev(self) -> bool:
+        return self.env == "dev"
+
+    @property
+    def admin_id_list(self) -> list[int]:
+        return [int(part) for part in (p.strip() for p in self.admin_ids.split(",")) if part]
+
+    def redis_key(self, *parts: str) -> str:
+        """Ключ redis с обязательным префиксом проекта: redis общий с чужими проектами."""
+        return self.redis_prefix + ":".join(parts)
+
+
+def _fail(errors: list[str]) -> None:
+    text = "\n".join(f"  • {line}" for line in errors)
+    sys.stderr.write(
+        "\n"
+        "╔══════════════════════════════════════════════════════════════╗\n"
+        "║  ЗАПУСК ОСТАНОВЛЕН: неверная конфигурация окружения          ║\n"
+        "╚══════════════════════════════════════════════════════════════╝\n"
+        f"{text}\n\n"
+        "Проверьте файл .env (образец — .env.example) или переменные окружения\n"
+        "контейнера, затем запустите заново.\n\n"
+    )
+    raise SystemExit(1)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    try:
+        return Settings()  # type: ignore[call-arg]
+    except ValidationError as exc:
+        errors: list[str] = []
+        for err in exc.errors():
+            field = str(err["loc"][0]) if err["loc"] else "?"
+            title = FIELD_TITLES.get(field, field.upper())
+            if err["type"] == "missing":
+                errors.append(f"не задана обязательная переменная {title}")
+            else:
+                errors.append(f"переменная {title}: {err['msg']}")
+        _fail(errors)
+        raise  # недостижимо, нужно для типизации

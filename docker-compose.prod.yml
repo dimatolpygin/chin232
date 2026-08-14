@@ -1,0 +1,60 @@
+# Боевой оверрайд: свои postgres и redis, без монтирования кода и без watchfiles.
+# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+x-app: &app
+  image: china_bot:prod
+  restart: always
+  volumes: []
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: china_postgres
+    environment:
+      POSTGRES_DB: china_bot
+      POSTGRES_USER: china_bot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?переменная POSTGRES_PASSWORD обязательна в prod}
+    volumes:
+      - china_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U china_bot -d china_bot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    container_name: china_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - china_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: always
+
+  bot:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        INSTALL_DEV: "false"
+  worker:
+    <<: *app
+  api:
+    <<: *app
+    ports:
+      - "8090:8080"
+
+volumes:
+  china_pgdata:
+  china_redisdata:

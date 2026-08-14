@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Установка зависимостей
+        run: pip install -r requirements-dev.txt
+
+      - name: Линт
+        run: ruff check app tests migrations
+
+      - name: Формат
+        run: ruff format --check app tests
+
+      - name: Тесты
+        env:
+          BOT_TOKEN: "123:AAtest"
+          DATABASE_URL: "postgresql+asyncpg://u:p@localhost/db"
+          REDIS_URL: "redis://localhost:6379/5"
+        run: pytest -q
+
+      - name: Сборка образа
+        run: docker build -f docker/Dockerfile -t china_bot:ci .
+
+  secrets-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверка, что ключи не попали в репозиторий
+        run: |
+          if git grep -nE "sk-or-v1-[A-Za-z0-9]|sk-proj-[A-Za-z0-9]|sk-fish-[A-Za-z0-9]|[0-9]{8,}:AA[A-Za-z0-9_-]{20,}" -- . ':!.github/workflows/ci.yml' ':!tests'; then
+            echo "НАЙДЕН КЛЮЧ В РЕПОЗИТОРИИ — коммит недопустим" >&2
+            exit 1
+          fi
+          echo "чисто"

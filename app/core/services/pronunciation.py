@@ -69,6 +69,9 @@ class AssessResult:
     ref_text: str
     chars: list[CharResult]
     check_id: int
+    # Сколько эталона сервис реально услышал. Низкая полнота — повод не верить
+    # баллам и переписать фразу, но не повод скрывать разбор.
+    integrity: int | None = None
 
 
 async def choose_target(session: AsyncSession, user: User, dialog_id: int) -> PracticeTarget:
@@ -291,4 +294,5 @@ async def assess_attempt(
         ref_text=target.ref_text,
         chars=chars,
         check_id=row.id,
+        integrity=result.integrity,
     )

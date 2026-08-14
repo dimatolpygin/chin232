@@ -24,6 +24,9 @@ from app.core.providers.base import (
     call_logged,
 )
 from app.core.providers.http import get_client
+from app.logging import get_logger
+
+log = get_logger("providers")
 
 BASE_URL = "https://api.speechsuper.com/"
 
@@ -35,15 +38,14 @@ TONE_WEIGHT = 0.33
 # charType == 1. Оценивать их нечего.
 CHAR_TYPE_PUNCTUATION = 1
 
-# Полнота (integrity) — сколько от эталона реально прозвучало. Она не про
-# акцент: даже сильный акцент даёт полноту под сотню, если фраза сказана.
-# На живой проверке пустая запись пришла с полнотой 20 и общим баллом 9 —
-# движок вытянул подобие фонем из фонового шума, и нулевой фильтр её пропустил.
-# Порог по полноте вместе с низким общим баллом отсекает именно молчание,
-# а не плохое произношение: сказанная наполовину фраза (полнота около 50)
-# разбор получает.
-MIN_INTEGRITY = 30
-MIN_OVERALL = 30
+# Полнота (integrity) — сколько от эталона реально прозвучало.
+#
+# Отсекать по ней запись нельзя: на живой проверке полноту 20 получали и
+# молчание, и настоящая речь человека — по цифрам они неразличимы. Порог,
+# поставленный по молчанию, отбил вообще все живые попытки. Поэтому здесь
+# остаётся только честный ноль, а низкая полнота идёт юзеру подсказкой
+# «проговорите фразу целиком» вместе с разбором.
+LOW_INTEGRITY = 60
 
 
 def _sha1(value: str) -> str:
@@ -172,6 +174,17 @@ class SpeechSuperPronunciation(PronunciationProvider):
         # честно оценил то, чего нет. Показывать юзеру «9 из 100» и пять
         # красных строк — хуже, чем попросить перезаписать.
         if not result.chars or _no_speech(result):
+            # Разбор пишем в лог целиком: без него «не расслышал» неотличимо от
+            # «сервис слышит не то», а запись юзера уже не переспросить.
+            log.info(
+                "разбор признан пустым",
+                балл=result.overall,
+                полнота=result.integrity,
+                беглость=result.fluency,
+                чистота=result.pronunciation,
+                тоны=result.tone,
+                по_иероглифам=[f"{c.char}:{c.overall}/{c.tone}" for c in result.chars],
+            )
             raise SpeechUnclear(
                 f"сервис не услышал речь: балл {result.overall}, полнота {result.integrity}"
             )
@@ -185,12 +198,8 @@ def _error_text(data: object) -> str:
 
 
 def _no_speech(result: Pronunciation) -> bool:
-    """Записи с речью здесь быть не может: либо нули, либо фраза не звучала."""
-    overall = result.overall or 0
-    if overall == 0 and all((c.overall or 0) == 0 for c in result.chars):
-        return True
-    integrity = result.integrity
-    return integrity is not None and integrity < MIN_INTEGRITY and overall < MIN_OVERALL
+    """Речи в записи нет вовсе: сервис проставил нули по всей фразе."""
+    return (result.overall or 0) == 0 and all((c.overall or 0) == 0 for c in result.chars)
 
 
 def _parse(data: dict[str, object]) -> Pronunciation:

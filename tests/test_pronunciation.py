@@ -250,14 +250,14 @@ async def test_тишина_просит_перезаписать_а_не_пок
 
 
 @pytest.mark.asyncio
-async def test_пустая_запись_с_шумом_тоже_просит_перезаписать(monkeypatch):
-    """Числа сняты с живой проверки: молчание в микрофон дало не нули.
+async def test_низкая_полнота_не_отбирает_у_юзера_разбор(monkeypatch):
+    """Числа сняты с живой проверки: полноту 20 давала и речь, и молчание.
 
-    Движок вытянул подобие фонем из фонового шума и поставил общий балл 9 при
-    полноте 20 — юзер получил разбор с пятью красными строками вместо просьбы
-    записать заново. Ловим по полноте: она говорит, сколько эталона прозвучало.
+    Порог, поставленный по молчанию, отбил вообще все живые попытки — юзер на
+    каждое голосовое получал «не смог разобрать». Разбор теперь доходит, а о
+    неполной фразе говорится отдельной строкой.
     """
-    шум = {
+    неполно = {
         "result": {
             "overall": 9,
             "pronunciation": 55,
@@ -267,25 +267,46 @@ async def test_пустая_запись_с_шумом_тоже_просит_п�
             "words": [{"word": "我", "tone": "tone3", "scores": {"overall": 55, "tone": 11}}],
         }
     }
-    monkeypatch.setattr(speechsuper, "get_client", lambda: FakeClient(шум))
-    with pytest.raises(SpeechUnclear):
-        await _provider().assess(b"wav", "我想聊天气。", "user-1")
-
-
-@pytest.mark.asyncio
-async def test_фраза_сказанная_наполовину_разбор_получает(monkeypatch):
-    """Порог не должен глотать реальную, пусть и неполную, попытку."""
-    половина = {
-        "result": {
-            "overall": 46,
-            "integrity": 55,
-            "tone": 40,
-            "words": [{"word": "我", "tone": "tone3", "scores": {"overall": 46, "tone": 40}}],
-        }
-    }
-    monkeypatch.setattr(speechsuper, "get_client", lambda: FakeClient(половина))
+    monkeypatch.setattr(speechsuper, "get_client", lambda: FakeClient(неполно))
     result = await _provider().assess(b"wav", "我想聊天气。", "user-1")
-    assert result.overall == 46
+    assert result.overall == 9
+    assert result.integrity == 20
+
+
+def test_неполная_фраза_честно_помечается():
+    result = _result(
+        [
+            pron.CharResult(
+                char="我",
+                pinyin="wǒ",
+                score=55,
+                tone_expected=3,
+                tone_actual=None,
+                tone_score=11,
+                tone_ok=False,
+            )
+        ]
+    )
+    result.integrity = 20
+    assert "Услышал не всю фразу" in render_result(result)
+
+
+def test_полная_фраза_обходится_без_лишних_советов():
+    result = _result(
+        [
+            pron.CharResult(
+                char="我",
+                pinyin="wǒ",
+                score=92,
+                tone_expected=3,
+                tone_actual=None,
+                tone_score=95,
+                tone_ok=True,
+            )
+        ]
+    )
+    result.integrity = 100
+    assert "Услышал не всю фразу" not in render_result(result)
 
 
 @pytest.mark.asyncio

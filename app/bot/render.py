@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 
 from app.bot.texts import ru
+from app.core.providers.pronunciation.speechsuper import LOW_INTEGRITY
 from app.core.services.pronunciation import AssessResult, CharResult, PracticeTarget
 
 # Пороги окраски взяты из демо самого сервиса оценки: ниже 70 — красное, до 85 —
@@ -99,6 +100,11 @@ def render_result(result: AssessResult) -> str:
         blocks.append("\n".join(render_char(c) for c in result.chars))
     сбито = sum(1 for c in result.chars if c.tone_ok is False)
     blocks.append(ru.PRON_TONES_WRONG.format(count=сбито) if сбито else ru.PRON_TONES_OK)
+    if result.integrity is not None and result.integrity < LOW_INTEGRITY:
+        # Баллам при неполной фразе верить нельзя, и молчать об этом нечестно:
+        # юзер решит, что у него провальное произношение, хотя его просто не
+        # дослушали.
+        blocks.append(ru.PRON_PARTIAL)
     return "\n\n".join(blocks)
 
 

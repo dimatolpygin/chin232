@@ -36,6 +36,30 @@ HALLUCINATIONS = [
 ]
 
 
+def try_recognize(transcript: Transcript) -> str | None:
+    """Как ensure_recognized, но без исключения: не прошло — вернёт None."""
+    try:
+        return ensure_recognized(transcript)
+    except NotRecognized:
+        return None
+
+
+VARIANT_PREFIX = re.compile(r"^\s*вариант\s*\d+\s*[:：]\s*", re.IGNORECASE)
+
+
+def strip_variant_prefix(text: str) -> str:
+    """Убрать «вариант N: » из выбора модели.
+
+    Модель иногда возвращает выбранный вариант вместе с меткой, под которой он
+    был предложен. В базу и в историю такая метка попасть не должна.
+    """
+    return VARIANT_PREFIX.sub("", text or "").strip()
+
+
+def has_han(text: str) -> bool:
+    return any("一" <= ch <= "鿿" for ch in text)
+
+
 def ensure_recognized(transcript: Transcript) -> str:
     text = (transcript.text or "").strip()
 

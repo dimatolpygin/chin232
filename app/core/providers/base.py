@@ -98,6 +98,9 @@ class LlmReply:
     pinyin: str | None = None
     translation: str | None = None
     correction: str | None = None
+    # Что модель приняла за реплику юзера. Заполняется, когда распознавание
+    # дало два варианта и выбор делала она.
+    heard: str | None = None
 
 
 @dataclass(slots=True)

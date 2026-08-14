@@ -82,4 +82,5 @@ class OpenRouterLLM(LLMProvider):
             pinyin=(data.get("pinyin") or None),
             translation=(data.get("translation") or None),
             correction=(data.get("correction") or None),
+            heard=(data.get("heard") or None),
         )

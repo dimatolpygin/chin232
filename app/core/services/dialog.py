@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass
@@ -14,9 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.core.events import track
-from app.core.providers.base import LlmReply
+from app.core.providers.base import LlmReply, Transcript
 from app.core.providers.registry import get_llm, get_stt, get_tts
-from app.core.services.recognition import ensure_recognized
+from app.core.services.recognition import (
+    NotRecognized,
+    ensure_recognized,
+    has_han,
+    strip_variant_prefix,
+    try_recognize,
+)
 from app.db.models import User
 from app.db.repositories.dialogs import (
     ROLE_ASSISTANT,
@@ -117,6 +124,50 @@ async def make_greeting(session: AsyncSession, user: User) -> VoiceAnswer:
     )
 
 
+async def _recognize(
+    audio: bytes, filename: str, settings: Settings
+) -> tuple[str, bool, Transcript]:
+    """Распознать речь. Возвращает текст, признак двух вариантов и авто-разбор.
+
+    Односекундная китайская фраза от человека с русским акцентом уверенно
+    определяется как русская («你好» приходит как «Мил!»). Подсказка это не
+    лечит, поэтому распознаём дважды — авто и с принудительным китайским — и,
+    если результаты разошлись, отдаём оба модели: она понимает смысл и выберет.
+    Оба запроса идут параллельно, так что время круга не растёт.
+    """
+    stt = get_stt(settings)
+    auto, forced = await asyncio.gather(
+        stt.transcribe(audio, filename),
+        stt.transcribe(audio, filename, language="zh"),
+        return_exceptions=True,
+    )
+    if isinstance(auto, BaseException) and isinstance(forced, BaseException):
+        raise auto
+    auto_t = None if isinstance(auto, BaseException) else auto
+    forced_t = None if isinstance(forced, BaseException) else forced
+
+    auto_text = try_recognize(auto_t) if auto_t else None
+    forced_text = try_recognize(forced_t) if forced_t else None
+
+    # Авто уверенно услышало китайский — разбирать нечего.
+    if auto_text and (auto_t.language or "").lower() == "chinese":
+        return auto_text, False, auto_t
+
+    # Оба варианта живые и разные: пусть выбирает модель.
+    if auto_text and forced_text and forced_text != auto_text and has_han(forced_text):
+        return f"вариант 1: {auto_text} | вариант 2: {forced_text}", True, auto_t
+
+    if auto_text:
+        return auto_text, False, auto_t
+    if forced_text:
+        return forced_text, False, forced_t
+
+    # Ни один проход не дал живой речи — это просьба повторить, а не сбой.
+    if auto_t is not None:
+        ensure_recognized(auto_t)
+    raise NotRecognized("ни один проход распознавания не дал речи")
+
+
 async def run_voice_round(
     session: AsyncSession,
     user: User,
@@ -134,16 +185,16 @@ async def run_voice_round(
     settings = get_settings()
     started = started_at if started_at is not None else time.monotonic()
 
+    ambiguous = False
     if audio is not None:
-        transcript = await get_stt(settings).transcribe(audio, audio_filename)
-        # Выдуманный сервисом текст отсеиваем до того, как на него ответит модель.
-        heard = ensure_recognized(transcript)
+        heard, ambiguous, transcript = await _recognize(audio, audio_filename, settings)
         log.info(
             "распознано",
             user_id=str(user.id),
             язык=transcript.language,
             секунд=transcript.duration_sec,
             текст=heard,
+            два_варианта=ambiguous,
         )
         await track(
             session,
@@ -151,6 +202,7 @@ async def run_voice_round(
             user_id=user.id,
             язык=transcript.language,
             секунд=transcript.duration_sec,
+            два_варианта=ambiguous,
         )
     else:
         heard = (text or "").strip()
@@ -158,10 +210,15 @@ async def run_voice_round(
     if not heard:
         raise ValueError("на входе круга пусто: ни голоса, ни текста")
 
-    await add_reply(session, user_id=user.id, role=ROLE_USER, text_zh=heard)
-
     history = await recent_history(session, user.id, settings.dialog_history_limit)
+    history.append({"role": ROLE_USER, "content": heard})
     reply = await _ask_llm(session, user, "dialog_system", history, settings)
+
+    # Если вариантов было два, в базу и в историю идёт тот, что выбрала модель:
+    # иначе следующая реплика потянет за собой мусор вроде «Мил!».
+    сказано = strip_variant_prefix(reply.heard) if (ambiguous and reply.heard) else heard
+    await add_reply(session, user_id=user.id, role=ROLE_USER, text_zh=сказано)
+
     audio_ogg = await _synthesize(reply.reply_zh, user, settings)
 
     await add_reply(
@@ -186,7 +243,7 @@ async def run_voice_round(
         "круг завершён",
         user_id=str(user.id),
         длительность_сек=elapsed,
-        услышано=heard,
+        услышано=сказано,
         ответ=reply.reply_zh,
     )
 
@@ -196,7 +253,7 @@ async def run_voice_round(
         pinyin=reply.pinyin,
         translation=reply.translation,
         correction=reply.correction,
-        heard_text=heard,
+        heard_text=сказано,
         elapsed_sec=elapsed,
     )
 

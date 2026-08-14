@@ -94,3 +94,18 @@ def test_принудительный_язык_попадает_в_запрос(
     )
     assert "language" not in stt._request_data(None)
     assert stt._request_data("zh")["language"] == "zh"
+
+
+def test_метка_варианта_срезается():
+    from app.core.services.recognition import strip_variant_prefix
+
+    assert strip_variant_prefix("вариант 2: 你好") == "你好"
+    assert strip_variant_prefix("Вариант 1： Привет") == "Привет"
+    assert strip_variant_prefix("你好") == "你好"
+
+
+def test_иероглифы_опознаются():
+    from app.core.services.recognition import has_han
+
+    assert has_han("你好")
+    assert not has_han("Мил!")

@@ -65,10 +65,11 @@ class Settings(BaseSettings):
     openai_tts_voice: str = "alloy"
     fish_api_key: str | None = None
     fish_model: str = "s1"
-    # Голос Fish выбирается человеком: библиотека там в основном народные клоны
-    # реальных людей, для коммерческого бота нужен дикторский нейтральный.
-    # Пусто — озвучка голосом модели по умолчанию.
-    fish_voice_id: str | None = None
+    # Голос Fish задаётся обязательно. Без reference_id сервис синтезирует
+    # каждый раз НОВЫЙ случайный голос — на живой проверке пользователь
+    # насчитал три разных собеседника подряд. По умолчанию 温柔动听女声:
+    # мягкий женский, нейтральный, не клон реального человека.
+    fish_voice_id: str | None = "faccba1a8ac54016bcfc02761285e67f"
     speechsuper_app_key: str | None = None
     speechsuper_secret_key: str | None = None
     lavatop_api_key: str | None = None

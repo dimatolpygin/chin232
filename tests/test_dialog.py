@@ -30,3 +30,18 @@ def test_начинающим_говорим_медленнее():
 
 def test_настройка_скорости_пользователя_умножается():
     assert _speed(_user("hsk56", speed=0.5)) == 0.5
+
+
+def test_голос_fish_задан_по_умолчанию():
+    """Регрессия: без reference_id Fish даёт новый случайный голос на каждый вызов.
+
+    На живой проверке это выглядело как три разных собеседника подряд.
+    """
+    from app.config import Settings
+
+    settings = Settings(
+        bot_token="123:AAtest",
+        database_url="postgresql+asyncpg://u:p@localhost/db",
+        redis_url="redis://localhost:6379/5",
+    )  # type: ignore[call-arg]
+    assert settings.fish_voice_id, "голос Fish не задан — собеседник будет меняться каждую реплику"

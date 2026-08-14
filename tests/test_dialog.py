@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.core.services.dialog import HSK_DESCRIPTIONS, _describe_level, _speed
+from app.core.services.dialog import HSK_DESCRIPTIONS, _speed, describe_level
 from app.db.models import User
 
 
@@ -14,13 +14,13 @@ def _user(level: str | None, speed: float = 1.0) -> User:
 
 
 def test_уровень_подставляется_в_промпт():
-    assert "HSK 1-2" in _describe_level(_user("hsk12"))
-    assert "HSK 5-6" in _describe_level(_user("hsk56"))
+    assert "HSK 1-2" in describe_level(_user("hsk12"))
+    assert "HSK 5-6" in describe_level(_user("hsk56"))
 
 
 def test_неизвестный_уровень_падает_на_начальный():
-    assert _describe_level(_user(None)) == HSK_DESCRIPTIONS["hsk12"]
-    assert _describe_level(_user("чепуха")) == HSK_DESCRIPTIONS["hsk12"]
+    assert describe_level(_user(None)) == HSK_DESCRIPTIONS["hsk12"]
+    assert describe_level(_user("чепуха")) == HSK_DESCRIPTIONS["hsk12"]
 
 
 def test_начинающим_говорим_медленнее():

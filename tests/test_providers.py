@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from app.config import Settings
@@ -20,8 +22,24 @@ def _llm() -> OpenRouterLLM:
     return OpenRouterLLM(Settings(openrouter_api_key="sk-or-v1-test", **BASE))  # type: ignore[arg-type]
 
 
+def _reply_from(content: str):
+    """Весь путь ответа модели: сырой текст → словарь → LlmReply.
+
+    Проверять только `_parse` мало: разбор словаря в реплику живёт в базовом
+    классе, и ошибка ровно на этой границе не была бы видна ни одному тесту.
+    """
+    llm = _llm()
+    data = llm._parse(content)
+
+    async def fake(_prompt, _history):
+        return data
+
+    llm.complete_json = fake  # type: ignore[method-assign]
+    return asyncio.run(llm.reply("промпт", []))
+
+
 def test_чистый_json_разбирается():
-    reply = _llm()._parse(
+    reply = _reply_from(
         '{"reply_zh": "你好", "pinyin": "Nǐ hǎo", "translation": "Привет", "correction": null}'
     )
     assert reply.reply_zh == "你好"
@@ -31,16 +49,21 @@ def test_чистый_json_разбирается():
 
 def test_json_в_markdown_обёртке_разбирается():
     # Модели регулярно оборачивают ответ в ```json вопреки инструкции.
-    reply = _llm()._parse('```json\n{"reply_zh": "你好", "pinyin": "Nǐ hǎo"}\n```')
+    reply = _reply_from('```json\n{"reply_zh": "你好", "pinyin": "Nǐ hǎo"}\n```')
     assert reply.reply_zh == "你好"
     assert reply.pinyin == "Nǐ hǎo"
 
 
 def test_сломанный_json_не_теряет_ответ():
     # Иероглифы есть — значит круг можно докрутить, терять реплику нельзя.
-    reply = _llm()._parse("你好，今天怎么样？")
+    reply = _reply_from("你好，今天怎么样？")
     assert reply.reply_zh == "你好，今天怎么样？"
     assert reply.pinyin is None
+
+
+def test_ответ_не_словарём_не_роняет_круг():
+    # Модель может вернуть валидный JSON-массив вместо объекта.
+    assert _llm()._parse("[1, 2, 3]") == {"_raw": "[1, 2, 3]"}
 
 
 def test_неизвестный_провайдер_падает_с_понятным_текстом():

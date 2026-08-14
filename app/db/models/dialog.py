@@ -28,6 +28,9 @@ class Dialog(Base):
     pinyin: Mapped[str | None] = mapped_column(Text, nullable=True)
     translation: Mapped[str | None] = mapped_column(Text, nullable=True)
     correction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Готовый текст подсказки «Помощь». Кэш платного вызова: повторное нажатие
+    # кнопки берёт его отсюда и не платит второй раз.
+    help_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_file_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True

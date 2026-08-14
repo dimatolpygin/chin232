@@ -6,7 +6,7 @@ import json
 import re
 
 from app.config import Settings
-from app.core.providers.base import LLMProvider, LlmReply, ProviderError, call_logged
+from app.core.providers.base import LLMProvider, ProviderError, call_logged
 from app.core.providers.http import get_client
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -25,7 +25,9 @@ class OpenRouterLLM(LLMProvider):
         self._model = settings.openrouter_model
         self._timeout = settings.provider_timeout
 
-    async def reply(self, system_prompt: str, history: list[dict[str, str]]) -> LlmReply:
+    async def complete_json(
+        self, system_prompt: str, history: list[dict[str, str]]
+    ) -> dict[str, object]:
         messages = [{"role": "system", "content": system_prompt}, *history]
         async with call_logged(
             self.name, "chat", модель=self._model, реплик_в_истории=len(history)
@@ -41,7 +43,11 @@ class OpenRouterLLM(LLMProvider):
                     "model": self._model,
                     "messages": messages,
                     "temperature": 0.7,
-                    "max_tokens": 260,
+                    # Потолок, а не цель: платим за фактические токены, а длину
+                    # ответа держит промпт. 260 хватало кругу, но подсказка из
+                    # трёх вариантов с пиньинем и переводом в него не влезала и
+                    # обрывалась на середине JSON.
+                    "max_tokens": 500,
                     "response_format": {"type": "json_object"},
                 },
             )
@@ -69,18 +75,14 @@ class OpenRouterLLM(LLMProvider):
 
         return self._parse(content)
 
-    def _parse(self, content: str) -> LlmReply:
+    def _parse(self, content: str) -> dict[str, object]:
         cleaned = FENCE.sub("", content.strip())
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
             # Модель не выдержала формат. Терять ответ из-за этого нельзя:
-            # иероглифы у нас есть, значит круг можно докрутить.
-            return LlmReply(reply_zh=cleaned)
-        return LlmReply(
-            reply_zh=(data.get("reply_zh") or "").strip(),
-            pinyin=(data.get("pinyin") or None),
-            translation=(data.get("translation") or None),
-            correction=(data.get("correction") or None),
-            heard=(data.get("heard") or None),
-        )
+            # отдаём содержимое как есть, вызывающий решит, что с ним делать.
+            return {"_raw": cleaned}
+        if not isinstance(data, dict):
+            return {"_raw": cleaned}
+        return data

@@ -62,9 +62,12 @@ class VoiceAnswer:
     correction: str | None
     heard_text: str | None
     elapsed_sec: float
+    # id реплики в `dialogs`. Через него кнопки «Текст» и «Помощь» находят
+    # сохранённый разбор, поэтому клавиатура строится только после записи.
+    dialog_id: int
 
 
-def _describe_level(user: User) -> str:
+def describe_level(user: User) -> str:
     return HSK_DESCRIPTIONS.get(user.hsk_level or DEFAULT_HSK, HSK_DESCRIPTIONS[DEFAULT_HSK])
 
 
@@ -112,7 +115,7 @@ async def _ask_llm(
     settings: Settings,
 ) -> LlmReply:
     template = await get_prompt(session, prompt_code)
-    system_prompt = template.format(hsk_level=_describe_level(user), topic=user.topic or TOPIC_FREE)
+    system_prompt = template.format(hsk_level=describe_level(user), topic=user.topic or TOPIC_FREE)
     return await get_llm(settings).reply(system_prompt, history)
 
 
@@ -124,7 +127,7 @@ async def make_greeting(session: AsyncSession, user: User) -> VoiceAnswer:
     reply = await _ask_llm(session, user, "greeting", [], settings)
     audio = await _synthesize(reply.reply_zh, user, settings)
 
-    await add_reply(
+    row = await add_reply(
         session,
         user_id=user.id,
         role=ROLE_ASSISTANT,
@@ -144,6 +147,7 @@ async def make_greeting(session: AsyncSession, user: User) -> VoiceAnswer:
         correction=None,
         heard_text=None,
         elapsed_sec=elapsed,
+        dialog_id=row.id,
     )
 
 
@@ -244,7 +248,7 @@ async def run_voice_round(
 
     audio_ogg = await _synthesize(reply.reply_zh, user, settings)
 
-    await add_reply(
+    row = await add_reply(
         session,
         user_id=user.id,
         role=ROLE_ASSISTANT,
@@ -278,6 +282,7 @@ async def run_voice_round(
         correction=reply.correction,
         heard_text=сказано,
         elapsed_sec=elapsed,
+        dialog_id=row.id,
     )
 
 

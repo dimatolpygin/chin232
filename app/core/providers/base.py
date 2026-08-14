@@ -126,7 +126,36 @@ class LLMProvider(ABC):
     name: str
 
     @abstractmethod
-    async def reply(self, system_prompt: str, history: list[dict[str, str]]) -> LlmReply: ...
+    async def complete_json(
+        self, system_prompt: str, history: list[dict[str, str]]
+    ) -> dict[str, object]:
+        """Сырой JSON-ответ модели.
+
+        Общий низ для всех промптов: круг, подсказки, дальше разбор произношения.
+        Без него каждая новая кнопка добавляла бы метод в интерфейс, а его
+        пришлось бы реализовывать во всех провайдерах — при том что отличается
+        только промпт. Если модель не выдержала формат, содержимое приходит
+        целиком в ключе `_raw`.
+        """
+
+    async def reply(self, system_prompt: str, history: list[dict[str, str]]) -> LlmReply:
+        data = await self.complete_json(system_prompt, history)
+        raw = data.get("_raw")
+        if raw is not None:
+            # Формат сломан, но иероглифы в ответе есть — круг докручиваем.
+            return LlmReply(reply_zh=str(raw))
+        return LlmReply(
+            reply_zh=str(data.get("reply_zh") or "").strip(),
+            pinyin=_text_or_none(data.get("pinyin")),
+            translation=_text_or_none(data.get("translation")),
+            correction=_text_or_none(data.get("correction")),
+            heard=_text_or_none(data.get("heard")),
+        )
+
+
+def _text_or_none(value: object) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
 
 
 class TTSProvider(ABC):

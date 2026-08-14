@@ -66,6 +66,25 @@ def test_ответ_не_словарём_не_роняет_круг():
     assert _llm()._parse("[1, 2, 3]") == {"_raw": "[1, 2, 3]"}
 
 
+def test_исправленная_фраза_доезжает_до_эталона():
+    reply = _reply_from(
+        '{"reply_zh": "你有三本书吗？", "correction": "Нужно счётное слово 本.",'
+        ' "corrected_zh": "我有三本书"}'
+    )
+    assert reply.corrected_zh == "我有三本书"
+
+
+def test_слово_null_в_исправленной_фразе_не_становится_эталоном():
+    """Та же болезнь, что и у поправки: модель пишет отсутствие значения строкой.
+
+    Проверено прогоном боевого промпта: на фразе без ошибок приходит
+    corrected_zh: "null". Без отсева юзер получил бы эталон «повторите за мной:
+    null» — и бот бы это ещё и озвучил.
+    """
+    reply = _reply_from('{"reply_zh": "你好", "corrected_zh": "null"}')
+    assert reply.corrected_zh is None
+
+
 def test_неизвестный_провайдер_падает_с_понятным_текстом():
     settings = Settings(tts_provider="неведомый", fish_api_key="x", **BASE)  # type: ignore[arg-type]
     with pytest.raises(ProviderError) as exc:

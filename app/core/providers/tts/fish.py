@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import httpx
-
 from app.config import Settings
 from app.core.providers.base import ProviderError, Speech, TTSProvider, call_logged
+from app.core.providers.http import get_client
 
 API_URL = "https://api.fish.audio/v1/tts"
 
@@ -35,16 +34,16 @@ class FishTTS(TTSProvider):
         async with call_logged(
             self.name, "tts", знаков=len(text), голос=voice or "по умолчанию", темп=speed
         ) as details:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.post(
-                    API_URL,
-                    headers={
-                        "Authorization": f"Bearer {self._key}",
-                        "Content-Type": "application/json",
-                        "model": self._model,
-                    },
-                    json=body,
-                )
+            client = get_client()
+            response = await client.post(
+                API_URL,
+                headers={
+                    "Authorization": f"Bearer {self._key}",
+                    "Content-Type": "application/json",
+                    "model": self._model,
+                },
+                json=body,
+            )
             details["http_код"] = response.status_code
             details["объём_ответа_байт"] = len(response.content)
             if response.status_code >= 400:

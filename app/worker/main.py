@@ -7,10 +7,12 @@ from typing import Any
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from arq import cron
 from arq.connections import RedisSettings
 from structlog.contextvars import bind_contextvars
 
 from app.config import get_settings
+from app.core.providers.http import close_client, warmup
 from app.db.session import dispose_engine
 from app.logging import clear_request, configure_logging, get_logger
 from app.worker.tasks import greet_user, process_voice_round
@@ -26,12 +28,22 @@ async def ping(ctx: dict[str, Any]) -> str:
     return "pong"
 
 
+async def keep_connections_warm(ctx: dict[str, Any]) -> None:
+    """Держит TLS-соединения живыми между разговорами.
+
+    Простаивающее соединение закрывается, и следующий круг снова платит за
+    рукопожатие — те самые лишние восемь секунд на первом сообщении.
+    """
+    await warmup()
+
+
 async def on_startup(ctx: dict[str, Any]) -> None:
     # Свой экземпляр Bot: воркер сам скачивает голосовые и сам отправляет ответ.
     ctx["bot"] = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    await warmup()
     log.info("воркер запущен", окружение=settings.env, очередь=settings.redis_prefix + "arq")
 
 
@@ -39,6 +51,7 @@ async def on_shutdown(ctx: dict[str, Any]) -> None:
     bot = ctx.get("bot")
     if bot is not None:
         await bot.session.close()
+    await close_client()
     await dispose_engine()
     log.info("воркер остановлен")
 
@@ -58,6 +71,9 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
 
 class WorkerSettings:
     functions = [ping, process_voice_round, greet_user]
+    # Каждые четыре минуты: раньше, чем сервер успеет закрыть простаивающее
+    # соединение по своему таймауту.
+    cron_jobs = [cron(keep_connections_warm, minute=set(range(0, 60, 4)), run_at_startup=False)]
     on_startup = on_startup
     on_shutdown = on_shutdown
     on_job_start = on_job_start

@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 import re
 
-import httpx
-
 from app.config import Settings
 from app.core.providers.base import LLMProvider, LlmReply, ProviderError, call_logged
+from app.core.providers.http import get_client
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -31,21 +30,21 @@ class OpenRouterLLM(LLMProvider):
         async with call_logged(
             self.name, "chat", модель=self._model, реплик_в_истории=len(history)
         ) as details:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.post(
-                    API_URL,
-                    headers={
-                        "Authorization": f"Bearer {self._key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self._model,
-                        "messages": messages,
-                        "temperature": 0.7,
-                        "max_tokens": 500,
-                        "response_format": {"type": "json_object"},
-                    },
-                )
+            client = get_client()
+            response = await client.post(
+                API_URL,
+                headers={
+                    "Authorization": f"Bearer {self._key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self._model,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 260,
+                    "response_format": {"type": "json_object"},
+                },
+            )
             details["http_код"] = response.status_code
             details["объём_ответа_байт"] = len(response.content)
             if response.status_code >= 400:

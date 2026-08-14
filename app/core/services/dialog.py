@@ -123,10 +123,16 @@ async def run_voice_round(
     audio: bytes | None = None,
     audio_filename: str = "voice.ogg",
     text: str | None = None,
+    started_at: float | None = None,
 ) -> VoiceAnswer:
-    """Полный круг. На входе либо голосовое, либо текст — принимаем и то, и то."""
+    """Полный круг. На входе либо голосовое, либо текст — принимаем и то, и то.
+
+    `started_at` — момент, с которого юзер ждёт ответ. Скачивание голосового из
+    Telegram он ждёт наравне с остальным, поэтому отсчёт ведём оттуда, а не с
+    распознавания: иначе метрика показывала бы число, которого никто не видит.
+    """
     settings = get_settings()
-    started = time.monotonic()
+    started = started_at if started_at is not None else time.monotonic()
 
     if audio is not None:
         transcript = await get_stt(settings).transcribe(audio, audio_filename)

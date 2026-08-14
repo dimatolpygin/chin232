@@ -30,6 +30,30 @@ TTS_PROVIDERS: dict[str, Callable[[Settings], TTSProvider]] = {
 }
 
 
+# Экземпляры провайдеров живут на процесс: они держат keep-alive соединение,
+# а пересоздание на каждый круг — лишнее TLS-рукопожатие в бюджете 12 секунд.
+_instances: dict[tuple[str, str], object] = {}
+_TABLES = {"stt": STT_PROVIDERS, "llm": LLM_PROVIDERS, "tts": TTS_PROVIDERS}
+
+
+def _process_settings() -> Settings | None:
+    try:
+        return get_settings()
+    except SystemExit:  # конфигурация неполна — кэшировать нечего
+        return None
+
+
+def _cached(kind: str, name: str, settings: Settings):
+    # Кэшируем только процессные настройки. Со своим объектом Settings (тесты,
+    # разовые проверки) провайдер собирается заново, иначе кэш отдал бы чужой.
+    if settings is not _process_settings():
+        return _build(kind, _TABLES[kind], name, settings)
+    key = (kind, name)
+    if key not in _instances:
+        _instances[key] = _build(kind, _TABLES[kind], name, settings)
+    return _instances[key]
+
+
 def _build(kind: str, table: dict, name: str, settings: Settings):
     factory = table.get(name)
     if factory is None:
@@ -43,14 +67,14 @@ def _build(kind: str, table: dict, name: str, settings: Settings):
 
 def get_stt(settings: Settings | None = None) -> STTProvider:
     settings = settings or get_settings()
-    return _build("stt", STT_PROVIDERS, settings.stt_provider, settings)
+    return _cached("stt", settings.stt_provider, settings)
 
 
 def get_llm(settings: Settings | None = None) -> LLMProvider:
     settings = settings or get_settings()
-    return _build("llm", LLM_PROVIDERS, settings.llm_provider, settings)
+    return _cached("llm", settings.llm_provider, settings)
 
 
 def get_tts(settings: Settings | None = None) -> TTSProvider:
     settings = settings or get_settings()
-    return _build("tts", TTS_PROVIDERS, settings.tts_provider, settings)
+    return _cached("tts", settings.tts_provider, settings)

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import httpx
-
 from app.config import Settings
 from app.core.providers.base import ProviderError, STTProvider, Transcript, call_logged
+from app.core.providers.http import get_client
 
 API_URL = "https://api.openai.com/v1/audio/transcriptions"
 
@@ -22,22 +21,22 @@ class OpenAIWhisperSTT(STTProvider):
 
     async def transcribe(self, audio: bytes, filename: str) -> Transcript:
         async with call_logged(self.name, "transcribe", объём_запроса_байт=len(audio)) as details:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.post(
-                    API_URL,
-                    headers={"Authorization": f"Bearer {self._key}"},
-                    files={"file": (filename, audio, "audio/ogg")},
-                    data={
-                        "model": self._model,
-                        # Китайский и русский в одном диалоге: язык не фиксируем,
-                        # пусть определяет сам. Но подсказкой сдвигаем в нужную
-                        # сторону — без неё на тихих фрагментах сервис уходит
-                        # в японский и выдумывает текст.
-                        "prompt": "Это разговорная запись на китайском или русском языке.",
-                        "temperature": "0",
-                        "response_format": "verbose_json",
-                    },
-                )
+            client = get_client()
+            response = await client.post(
+                API_URL,
+                headers={"Authorization": f"Bearer {self._key}"},
+                files={"file": (filename, audio, "audio/ogg")},
+                data={
+                    "model": self._model,
+                    # Китайский и русский в одном диалоге: язык не фиксируем,
+                    # пусть определяет сам. Но подсказкой сдвигаем в нужную
+                    # сторону — без неё на тихих фрагментах сервис уходит
+                    # в японский и выдумывает текст.
+                    "prompt": "Это разговорная запись на китайском или русском языке.",
+                    "temperature": "0",
+                    "response_format": "verbose_json",
+                },
+            )
             details["http_код"] = response.status_code
             details["объём_ответа_байт"] = len(response.content)
             if response.status_code >= 400:

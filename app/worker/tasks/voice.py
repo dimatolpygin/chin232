@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -75,13 +76,18 @@ async def process_voice_round(
     """Круг по голосовому или тексту пользователя."""
     bind_request(request_id, user_id=user_id, job=ctx.get("job_id"))
     bot = ctx["bot"]
+    started = time.monotonic()
 
     try:
         audio: bytes | None = None
         if file_id:
             buffer = await bot.download(file_id)
             audio = buffer.read()
-            log.info("голосовое скачано", байт=len(audio))
+            log.info(
+                "голосовое скачано",
+                байт=len(audio),
+                длительность_мс=round((time.monotonic() - started) * 1000),
+            )
 
         async with session_scope() as session:
             user = await session.get(User, uuid.UUID(user_id))
@@ -89,7 +95,9 @@ async def process_voice_round(
                 log.error("пользователь не найден", user_id=user_id)
                 return
             await bot.send_chat_action(chat_id, "record_voice")
-            answer = await run_voice_round(session, user, audio=audio, text=text)
+            answer = await run_voice_round(
+                session, user, audio=audio, text=text, started_at=started
+            )
             voice_file_id = await _send_answer(bot, chat_id, answer)
             if voice_file_id:
                 row = await last_assistant_reply(session, user.id)

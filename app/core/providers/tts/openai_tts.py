@@ -7,10 +7,9 @@
 
 from __future__ import annotations
 
-import httpx
-
 from app.config import Settings
 from app.core.providers.base import ProviderError, Speech, TTSProvider, call_logged
+from app.core.providers.http import get_client
 
 API_URL = "https://api.openai.com/v1/audio/speech"
 
@@ -31,19 +30,19 @@ class OpenAITTS(TTSProvider):
         async with call_logged(
             self.name, "tts", знаков=len(text), голос=voice, темп=speed
         ) as details:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.post(
-                    API_URL,
-                    headers={"Authorization": f"Bearer {self._key}"},
-                    json={
-                        "model": self._model,
-                        "input": text,
-                        "voice": voice,
-                        # Сервис принимает темп в диапазоне 0.25–4.0.
-                        "speed": max(0.25, min(4.0, speed)),
-                        "response_format": "mp3",
-                    },
-                )
+            client = get_client()
+            response = await client.post(
+                API_URL,
+                headers={"Authorization": f"Bearer {self._key}"},
+                json={
+                    "model": self._model,
+                    "input": text,
+                    "voice": voice,
+                    # Сервис принимает темп в диапазоне 0.25–4.0.
+                    "speed": max(0.25, min(4.0, speed)),
+                    "response_format": "mp3",
+                },
+            )
             details["http_код"] = response.status_code
             details["объём_ответа_байт"] = len(response.content)
             if response.status_code >= 400:

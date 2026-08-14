@@ -78,3 +78,9 @@ def get_llm(settings: Settings | None = None) -> LLMProvider:
 def get_tts(settings: Settings | None = None) -> TTSProvider:
     settings = settings or get_settings()
     return _cached("tts", settings.tts_provider, settings)
+
+
+def get_tts_by_name(name: str, settings: Settings | None = None) -> TTSProvider:
+    """Озвучка по имени — для фолбэка, когда основная сбойнула."""
+    settings = settings or get_settings()
+    return _cached("tts", name, settings)

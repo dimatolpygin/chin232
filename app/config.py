@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     llm_provider: str = "openrouter"
     stt_provider: str = "openai_whisper"
     tts_provider: str = "fish"
+    # Запасная озвучка на случай сбоя основной. Пусто — фолбэка нет.
+    tts_fallback_provider: str | None = "openai"
     pronunciation_provider: str = "speechsuper"
 
     # --- ключи внешних сервисов, на этапе 0 не обязательны ---

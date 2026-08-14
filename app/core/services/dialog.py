@@ -15,8 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.core.events import track
-from app.core.providers.base import LlmReply, Transcript
-from app.core.providers.registry import get_llm, get_stt, get_tts
+from app.core.providers.base import LlmReply, ProviderError, Transcript
+from app.core.providers.registry import get_llm, get_stt, get_tts, get_tts_by_name
 from app.core.services.recognition import (
     NotRecognized,
     ensure_recognized,
@@ -75,9 +75,32 @@ def _speed(user: User) -> float:
 
 
 async def _synthesize(text: str, user: User, settings: Settings) -> bytes:
+    """Озвучить ответ. При сбое основного сервиса пробуем запасной.
+
+    На живой проверке Fish ответил 500 «Inference backend returned empty audio»
+    и круг пропал — юзеру пришлось перезаписывать голосовое. Ради этого случая
+    и заводился второй провайдер: чужая пятисотка не должна стоить пользователю
+    целой реплики.
+    """
     from app.core.audio import to_voice_ogg
 
-    speech = await get_tts(settings).synthesize(text, user.voice_id, _speed(user))
+    speed = _speed(user)
+    try:
+        speech = await get_tts(settings).synthesize(text, user.voice_id, speed)
+    except ProviderError as exc:
+        fallback = settings.tts_fallback_provider
+        if not fallback or fallback == settings.tts_provider:
+            raise
+        log.warning(
+            "основная озвучка сбойнула, идём на запасную",
+            основной=settings.tts_provider,
+            запасной=fallback,
+            http_код=exc.status_code,
+        )
+        provider = get_tts_by_name(fallback, settings)
+        # Голос у запасного сервиса свой, пользовательский id ему не подойдёт.
+        speech = await provider.synthesize(text, None, speed)
+
     return await to_voice_ogg(speech.audio, source_format=speech.fmt)
 
 

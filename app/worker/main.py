@@ -8,10 +8,11 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from arq.connections import RedisSettings
+from structlog.contextvars import bind_contextvars
 
 from app.config import get_settings
 from app.db.session import dispose_engine
-from app.logging import bind_request, clear_request, configure_logging, get_logger
+from app.logging import clear_request, configure_logging, get_logger
 from app.worker.tasks import greet_user, process_voice_round
 
 settings = get_settings()
@@ -43,7 +44,10 @@ async def on_shutdown(ctx: dict[str, Any]) -> None:
 
 
 async def on_job_start(ctx: dict[str, Any]) -> None:
-    bind_request(request_id=None, job=ctx.get("job_id"))
+    # request_id здесь не выдумываем: настоящий приходит в аргументах задачи из
+    # бота, и задача привяжет его сама. Свой случайный id рвал бы цепочку —
+    # обёртка жила бы под одним идентификатором, а сама работа под другим.
+    bind_contextvars(job=ctx.get("job_id"))
     log.info("задача взята в работу", попытка=ctx.get("job_try"), job_id=ctx.get("job_id"))
 
 

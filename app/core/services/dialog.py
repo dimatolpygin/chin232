@@ -16,6 +16,7 @@ from app.config import Settings, get_settings
 from app.core.events import track
 from app.core.providers.base import LlmReply
 from app.core.providers.registry import get_llm, get_stt, get_tts
+from app.core.services.recognition import ensure_recognized
 from app.db.models import User
 from app.db.repositories.dialogs import (
     ROLE_ASSISTANT,
@@ -129,7 +130,8 @@ async def run_voice_round(
 
     if audio is not None:
         transcript = await get_stt(settings).transcribe(audio, audio_filename)
-        heard = transcript.text
+        # Выдуманный сервисом текст отсеиваем до того, как на него ответит модель.
+        heard = ensure_recognized(transcript)
         log.info(
             "распознано",
             user_id=str(user.id),

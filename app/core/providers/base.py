@@ -87,6 +87,9 @@ class Transcript:
     text: str
     language: str | None = None
     duration_sec: float | None = None
+    # Признаки того, что сервис распознал тишину и придумал текст.
+    no_speech_prob: float | None = None
+    avg_logprob: float | None = None
 
 
 @dataclass(slots=True)

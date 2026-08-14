@@ -30,7 +30,11 @@ class OpenAIWhisperSTT(STTProvider):
                     data={
                         "model": self._model,
                         # Китайский и русский в одном диалоге: язык не фиксируем,
-                        # пусть определяет сам.
+                        # пусть определяет сам. Но подсказкой сдвигаем в нужную
+                        # сторону — без неё на тихих фрагментах сервис уходит
+                        # в японский и выдумывает текст.
+                        "prompt": "Это разговорная запись на китайском или русском языке.",
+                        "temperature": "0",
                         "response_format": "verbose_json",
                     },
                 )
@@ -47,8 +51,11 @@ class OpenAIWhisperSTT(STTProvider):
             payload = response.json()
 
         text = (payload.get("text") or "").strip()
+        segments = payload.get("segments") or []
         return Transcript(
             text=text,
             language=payload.get("language"),
             duration_sec=payload.get("duration"),
+            no_speech_prob=max((s.get("no_speech_prob", 0.0) for s in segments), default=None),
+            avg_logprob=min((s.get("avg_logprob", 0.0) for s in segments), default=None),
         )

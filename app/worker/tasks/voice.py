@@ -15,6 +15,7 @@ from aiogram.types import BufferedInputFile
 from app.bot.texts import ru
 from app.core.providers.base import ProviderError
 from app.core.services.dialog import VoiceAnswer, make_greeting, run_voice_round
+from app.core.services.recognition import NotRecognized
 from app.db.models import User
 from app.db.repositories.dialogs import last_assistant_reply
 from app.db.session import session_scope
@@ -38,6 +39,14 @@ async def _send_answer(bot: Any, chat_id: int, answer: VoiceAnswer) -> str | Non
 
 async def _fail(bot: Any, chat_id: int, exc: Exception, этап: str) -> None:
     """Сбой внешнего сервиса не должен ронять бота: юзер видит понятное сообщение."""
+    if isinstance(exc, NotRecognized):
+        # Это не авария, а просьба повторить: текст юзеру другой.
+        log.info("речь не распознана", этап=этап, причина=str(exc))
+        try:
+            await bot.send_message(chat_id, ru.NOT_RECOGNIZED)
+        except Exception:  # noqa: BLE001
+            log.warning("не удалось отправить просьбу повторить", chat_id=chat_id)
+        return
     if isinstance(exc, ProviderError):
         log.error(
             "круг оборван сбоем внешнего сервиса",

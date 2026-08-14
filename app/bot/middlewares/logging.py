@@ -42,11 +42,15 @@ class LoggingMiddleware(BaseMiddleware):
         )
         data["request_id"] = request_id
 
+        # user_id здесь намеренно не пишется: наш UUID ещё не известен, его
+        # добавит UserMiddleware в contextvars, и он появится во всех записях
+        # цепочки ниже. Telegram-идентификатор живёт строго в telegram_id —
+        # одно имя поля на два пространства идентификаторов путает разбор.
         log.info(
             "входящее",
             тип=kind,
             username=f"@{getattr(user, 'username', None) or '—'}",
-            user_id=getattr(user, "id", None),
+            telegram_id=getattr(user, "id", None),
             first_name=getattr(user, "first_name", None) or "—",
             текст=content,
         )

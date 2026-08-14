@@ -53,7 +53,7 @@ async def test_при_сбое_основной_озвучки_берётся_з
     monkeypatch.setattr("app.core.audio.to_voice_ogg", fake_convert)
 
     settings = Settings(tts_provider="fish", tts_fallback_provider="openai", **BASE)  # type: ignore[arg-type]
-    result = await dialog_service._synthesize("你好", _user(), settings)
+    result = await dialog_service.synthesize_voice("你好", _user(), settings)
 
     assert working.вызван, "запасная озвучка не вызвана"
     assert result == b"ogg-mp3-bytes"
@@ -64,4 +64,4 @@ async def test_без_запасной_ошибка_пробрасывается
     settings = Settings(tts_provider="fish", tts_fallback_provider=None, **BASE)  # type: ignore[arg-type]
 
     with pytest.raises(ProviderError):
-        await dialog_service._synthesize("你好", _user(), settings)
+        await dialog_service.synthesize_voice("你好", _user(), settings)

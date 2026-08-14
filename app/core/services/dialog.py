@@ -77,7 +77,7 @@ def _speed(user: User) -> float:
     return round(base * (user.speech_speed or 1.0), 2)
 
 
-async def _synthesize(text: str, user: User, settings: Settings) -> bytes:
+async def synthesize_voice(text: str, user: User, settings: Settings) -> bytes:
     """Озвучить ответ. При сбое основного сервиса пробуем запасной.
 
     На живой проверке Fish ответил 500 «Inference backend returned empty audio»
@@ -125,7 +125,7 @@ async def make_greeting(session: AsyncSession, user: User) -> VoiceAnswer:
     started = time.monotonic()
 
     reply = await _ask_llm(session, user, "greeting", [], settings)
-    audio = await _synthesize(reply.reply_zh, user, settings)
+    audio = await synthesize_voice(reply.reply_zh, user, settings)
 
     row = await add_reply(
         session,
@@ -246,7 +246,7 @@ async def run_voice_round(
     сказано = strip_variant_prefix(reply.heard) if (ambiguous and reply.heard) else heard
     await add_reply(session, user_id=user.id, role=ROLE_USER, text_zh=сказано)
 
-    audio_ogg = await _synthesize(reply.reply_zh, user, settings)
+    audio_ogg = await synthesize_voice(reply.reply_zh, user, settings)
 
     row = await add_reply(
         session,
@@ -256,6 +256,7 @@ async def run_voice_round(
         pinyin=reply.pinyin,
         translation=reply.translation,
         correction=reply.correction,
+        corrected_zh=reply.corrected_zh,
     )
 
     elapsed = round(time.monotonic() - started, 2)

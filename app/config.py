@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # не клон реального человека.
     fish_voice_id: str | None = "23632847285a487d8e0c6ae5bc593c71"
     speechsuper_app_key: str | None = None
+    # Тариф оценки. На обычном (`sent.eval.cn`) приходит балл тона на иероглиф,
+    # на promax — ещё и услышанный тон. Аккаунту выдают конкретный набор, и
+    # чужой coreType сервис отвергает, поэтому это настройка, а не константа.
+    speechsuper_core_type: str = "sent.eval.cn"
     speechsuper_secret_key: str | None = None
     lavatop_api_key: str | None = None
 

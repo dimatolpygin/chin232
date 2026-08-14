@@ -21,13 +21,22 @@ except ImportError:  # pragma: no cover
     AVAILABLE = False
 
 
-def to_pinyin(text: str) -> str:
-    """Пиньинь со знаками тонов (nǐ hǎo). Пустая строка, если посчитать нечем."""
+def to_pinyin_list(text: str) -> list[str]:
+    """Пиньинь по слогам, в порядке иероглифов исходной строки.
+
+    Считается по фразе целиком, а не по одному знаку: тон третьего в 你好 и
+    тон 不 перед четвёртым зависят от соседей, посимвольный вызов их теряет.
+    """
     if not text or not AVAILABLE:
-        return ""
+        return []
     try:
         parts = _pinyin(text, style=Style.TONE, errors="ignore")
     except Exception as exc:  # noqa: BLE001  разбор текста не должен ронять кнопку
         log.warning("не удалось посчитать пиньинь локально", ошибка=repr(exc))
-        return ""
-    return " ".join(p[0] for p in parts if p and p[0]).strip()
+        return []
+    return [p[0] for p in parts if p and p[0]]
+
+
+def to_pinyin(text: str) -> str:
+    """Пиньинь со знаками тонов (nǐ hǎo). Пустая строка, если посчитать нечем."""
+    return " ".join(to_pinyin_list(text)).strip()

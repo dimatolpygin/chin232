@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.logging import get_logger
 
@@ -98,6 +98,8 @@ class LlmReply:
     pinyin: str | None = None
     translation: str | None = None
     correction: str | None = None
+    # Исправленная фраза самого юзера иероглифами: эталон для «повтори за мной».
+    corrected_zh: str | None = None
     # Что модель приняла за реплику юзера. Заполняется, когда распознавание
     # дало два варианта и выбор делала она.
     heard: str | None = None
@@ -107,6 +109,50 @@ class LlmReply:
 class Speech:
     audio: bytes
     fmt: str
+
+
+# Ниже этого балла тон считается сбитым. Сервис ставит верному тону около сотни,
+# а промаху — единицы, так что порог посередине ничего не режет по живому.
+TONE_OK_SCORE = 60
+
+
+@dataclass(slots=True)
+class CharScore:
+    """Оценка одного иероглифа. Тона — главное, ради чего всё затевалось."""
+
+    char: str
+    overall: int | None = None
+    tone: int | None = None
+    # Пиньинь со знаками тонов от самого сервиса: он считает сандхи по фразе.
+    pinyin: str | None = None
+    # Какой тон полагался по эталону и какой сервис услышал. Второе поле есть
+    # не во всех тарифах: на обычном приходит только балл тона.
+    tone_expected: int | None = None
+    tone_actual: int | None = None
+
+    @property
+    def tone_ok(self) -> bool | None:
+        if self.tone_expected is not None and self.tone_actual is not None:
+            return self.tone_expected == self.tone_actual
+        # Услышанного тона нет — судим по баллу: он и падает, когда тон сбит.
+        if self.tone is not None:
+            return self.tone >= TONE_OK_SCORE
+        return None
+
+
+@dataclass(slots=True)
+class Pronunciation:
+    """Разбор произношения одной фразы."""
+
+    overall: int | None = None
+    pronunciation: int | None = None
+    tone: int | None = None
+    fluency: int | None = None
+    integrity: int | None = None
+    chars: list[CharScore] = field(default_factory=list)
+    # Полный ответ сервиса. Ложится в pronunciation_checks.detail: переспросить
+    # по той же записи потом уже не выйдет.
+    raw: dict[str, object] = field(default_factory=dict)
 
 
 class STTProvider(ABC):
@@ -149,6 +195,7 @@ class LLMProvider(ABC):
             pinyin=_text_or_none(data.get("pinyin")),
             translation=_text_or_none(data.get("translation")),
             correction=_text_or_none(data.get("correction")),
+            corrected_zh=_text_or_none(data.get("corrected_zh")),
             heard=_text_or_none(data.get("heard")),
         )
 
@@ -172,3 +219,21 @@ class TTSProvider(ABC):
 
     @abstractmethod
     async def synthesize(self, text: str, voice_id: str | None, speed: float) -> Speech: ...
+
+
+class SpeechUnclear(RuntimeError):
+    """Сервис принял запись, но разобрать её не смог: тишина, шум, не та речь.
+
+    Это не авария, а просьба перезаписать: юзеру нужен другой текст, чем при
+    сбое сервиса, и в логах это не должно выглядеть падением.
+    """
+
+
+class PronunciationProvider(ABC):
+    """Единственный в цепочке, кто слышит ЗВУК, а не текст."""
+
+    name: str
+
+    @abstractmethod
+    async def assess(self, audio_wav: bytes, ref_text: str, user_id: str) -> Pronunciation:
+        """Оценить запись по эталонной фразе. Звук — WAV 16 кГц моно 16 бит."""

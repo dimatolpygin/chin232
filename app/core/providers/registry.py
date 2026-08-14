@@ -9,8 +9,15 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from app.config import Settings, get_settings
-from app.core.providers.base import LLMProvider, ProviderError, STTProvider, TTSProvider
+from app.core.providers.base import (
+    LLMProvider,
+    PronunciationProvider,
+    ProviderError,
+    STTProvider,
+    TTSProvider,
+)
 from app.core.providers.llm.openrouter import OpenRouterLLM
+from app.core.providers.pronunciation.speechsuper import SpeechSuperPronunciation
 from app.core.providers.stt.openai_whisper import OpenAIWhisperSTT
 from app.core.providers.tts.fish import FishTTS
 from app.core.providers.tts.openai_tts import OpenAITTS
@@ -28,12 +35,20 @@ TTS_PROVIDERS: dict[str, Callable[[Settings], TTSProvider]] = {
     "fish": FishTTS,
     "openai": OpenAITTS,
 }
+PRONUNCIATION_PROVIDERS: dict[str, Callable[[Settings], PronunciationProvider]] = {
+    "speechsuper": SpeechSuperPronunciation,
+}
 
 
 # Экземпляры провайдеров живут на процесс: они держат keep-alive соединение,
 # а пересоздание на каждый круг — лишнее TLS-рукопожатие в бюджете 12 секунд.
 _instances: dict[tuple[str, str], object] = {}
-_TABLES = {"stt": STT_PROVIDERS, "llm": LLM_PROVIDERS, "tts": TTS_PROVIDERS}
+_TABLES = {
+    "stt": STT_PROVIDERS,
+    "llm": LLM_PROVIDERS,
+    "tts": TTS_PROVIDERS,
+    "pronunciation": PRONUNCIATION_PROVIDERS,
+}
 
 
 def _process_settings() -> Settings | None:
@@ -78,6 +93,11 @@ def get_llm(settings: Settings | None = None) -> LLMProvider:
 def get_tts(settings: Settings | None = None) -> TTSProvider:
     settings = settings or get_settings()
     return _cached("tts", settings.tts_provider, settings)
+
+
+def get_pronunciation(settings: Settings | None = None) -> PronunciationProvider:
+    settings = settings or get_settings()
+    return _cached("pronunciation", settings.pronunciation_provider, settings)
 
 
 def get_tts_by_name(name: str, settings: Settings | None = None) -> TTSProvider:

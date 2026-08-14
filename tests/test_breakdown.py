@@ -141,10 +141,10 @@ def test_кнопки_разбираются_обратно():
 
 def test_нажатая_кнопка_исчезает():
     """Так и обеспечивается «повторное нажатие не дублирует сообщения»."""
-    markup = answer_keyboard(42, with_text=False)
+    markup = answer_keyboard(42, with_text=False, with_pron=False)
     data = [b.callback_data for row in markup.inline_keyboard for b in row]
     assert data == ["ans:help:42"]
-    assert answer_keyboard(42, with_text=False, with_help=False) is None
+    assert answer_keyboard(42, with_text=False, with_help=False, with_pron=False) is None
 
 
 def test_чужой_callback_data_не_разбирается():

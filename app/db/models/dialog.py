@@ -28,6 +28,10 @@ class Dialog(Base):
     pinyin: Mapped[str | None] = mapped_column(Text, nullable=True)
     translation: Mapped[str | None] = mapped_column(Text, nullable=True)
     correction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Исправленная фраза собеседника иероглифами — эталон для «повтори за мной».
+    # `correction` объясняет ошибку по-русски и произнести его нельзя, поэтому
+    # правильный вариант модель отдаёт отдельным полем.
+    corrected_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Готовый текст подсказки «Помощь». Кэш платного вызова: повторное нажатие
     # кнопки берёт его отсюда и не платит второй раз.
     help_text: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -36,6 +36,7 @@ WARMUP_HOSTS = (
     "https://api.openai.com/v1/models",
     "https://openrouter.ai/api/v1/models",
     "https://api.fish.audio/",
+    "https://api.speechsuper.com/",
     # Telegram здесь не лишний: воркер скачивает оттуда голосовые.
     "https://api.telegram.org/",
 )

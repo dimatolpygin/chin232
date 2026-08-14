@@ -30,7 +30,7 @@ from app.logging import bind_request, get_logger
 log = get_logger("worker")
 
 
-async def _download_voice(bot: Any, file_id: str) -> bytes:
+async def download_voice(bot: Any, file_id: str) -> bytes:
     """Скачать голосовое через общий прогретый клиент.
 
     Свой клиент, а не сессия aiogram: та живёт отдельным пулом и прогрева не
@@ -107,7 +107,7 @@ async def process_voice_round(
             # Индикатор записи и скачивание идут параллельно: последовательно
             # это добавляло бы юзеру ожидание на ровном месте.
             audio, _ = await asyncio.gather(
-                _download_voice(bot, file_id),
+                download_voice(bot, file_id),
                 bot.send_chat_action(chat_id, "record_voice"),
             )
             мс = round((time.monotonic() - started) * 1000)

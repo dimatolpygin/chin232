@@ -21,6 +21,7 @@ async def add_reply(
     pinyin: str | None = None,
     translation: str | None = None,
     correction: str | None = None,
+    corrected_zh: str | None = None,
     audio_file_id: str | None = None,
 ) -> Dialog:
     row = Dialog(
@@ -30,6 +31,7 @@ async def add_reply(
         pinyin=pinyin,
         translation=translation,
         correction=correction,
+        corrected_zh=corrected_zh,
         audio_file_id=audio_file_id,
     )
     session.add(row)

@@ -1,27 +1,41 @@
-"""Кнопки «Текст» и «Помощь» под голосовым ответом бота."""
+"""Кнопки под голосовым ответом бота: «Текст», «Помощь», «Оценка»."""
 
 from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery
+from aiogram.types import BufferedInputFile, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.answer import (
+    ACTION_AGAIN,
+    ACTION_CANCEL,
     ACTION_HELP,
+    ACTION_LISTEN,
     ACTION_PREFIX,
+    ACTION_PRON,
     ACTION_TEXT,
     answer_keyboard,
     parse_action,
+    practice_keyboard,
 )
-from app.bot.render import esc
+from app.bot.render import esc, render_practice
 from app.bot.texts import ru
 from app.config import get_settings
+from app.core.events import track
 from app.core.services.breakdown import (
     ReplyNotFound,
     Suggestion,
     get_suggestions,
     get_text_breakdown,
+)
+from app.core.services.pronunciation import (
+    PracticeTarget,
+    choose_target,
+    load_practice,
+    remember_reference_audio,
+    start_practice,
+    stop_practice,
 )
 from app.db.models import User
 from app.logging import get_logger
@@ -29,9 +43,17 @@ from app.logging import get_logger
 router = Router(name="answer")
 log = get_logger("bot")
 
-# Замок живёт минуту: этого хватает на самый медленный платный вызов и не
-# успевает помешать осмысленному повтору.
+# Замок живёт минуту там, где нажатие стоит денег: этого хватает на самый
+# медленный вызов и не мешает осмысленному повтору. Кнопки, которые ничего не
+# считают и живут под сообщением постоянно («Послушать», «Ещё раз»), держатся
+# секунды — иначе юзер, послушавший эталон, не смог бы послушать его снова.
 LOCK_TTL_SEC = 60
+QUICK_LOCK_TTL_SEC = 5
+QUICK_ACTIONS = {ACTION_LISTEN, ACTION_AGAIN, ACTION_CANCEL}
+
+# Кнопки, которые после нажатия исчезают: их результат остаётся на экране, и
+# нажимать второй раз нечего.
+ONE_SHOT_ACTIONS = {ACTION_TEXT, ACTION_HELP, ACTION_PRON}
 
 
 def _render_help(items: list[Suggestion]) -> str:
@@ -45,11 +67,12 @@ def _render_help(items: list[Suggestion]) -> str:
 
 
 async def _drop_button(callback: CallbackQuery, dialog_id: int, action: str) -> None:
-    """Убрать нажатую кнопку, оставив вторую."""
+    """Убрать нажатую кнопку, оставив остальные."""
     markup = answer_keyboard(
         dialog_id,
         with_text=action != ACTION_TEXT and _has(callback, ACTION_TEXT),
         with_help=action != ACTION_HELP and _has(callback, ACTION_HELP),
+        with_pron=action != ACTION_PRON and _has(callback, ACTION_PRON),
     )
     try:
         await callback.message.edit_reply_markup(reply_markup=markup)
@@ -85,11 +108,12 @@ async def on_action(
 
     # Кнопка исчезает после нажатия, но два быстрых тапа успевают проскочить
     # оба: Telegram шлёт апдейты параллельно, и второй придёт с ещё живой
-    # клавиатурой. Замок в Redis — единственное, что делает «Помощь» реально
-    # однократной, иначе юзер получит два сообщения и два платных вызова.
+    # клавиатурой. Замок в Redis — единственное, что делает платное нажатие
+    # реально однократным, иначе юзер получит два сообщения и два вызова.
     # Префикс обязателен: redis общий с чужими проектами.
     key = get_settings().redis_key("lock", action, str(dialog_id))
-    if not await queue.set(key, "1", nx=True, ex=LOCK_TTL_SEC):
+    ttl = QUICK_LOCK_TTL_SEC if action in QUICK_ACTIONS else LOCK_TTL_SEC
+    if not await queue.set(key, "1", nx=True, ex=ttl):
         await callback.answer(ru.ACTION_ALREADY)
         log.info("повторное нажатие отбито замком", user_id=str(user.id), кнопка=action)
         return
@@ -105,12 +129,22 @@ async def on_action(
             await _show_text(callback, session, user, dialog_id)
         elif action == ACTION_HELP:
             await _show_help(callback, session, user, dialog_id)
+        elif action == ACTION_PRON:
+            await _start_practice(callback, session, user, queue, dialog_id)
+        elif action == ACTION_LISTEN:
+            await _listen_again(callback, session, user, queue, dialog_id)
+        elif action == ACTION_AGAIN:
+            await _try_again(callback, session, user, queue, dialog_id)
+        elif action == ACTION_CANCEL:
+            await _cancel_practice(callback, session, user, queue, dialog_id)
     except ReplyNotFound:
         log.warning("реплика для кнопки не найдена", user_id=str(user.id), реплика=dialog_id)
         # Всплывашкой уже не ответить — запрос закрыт выше, поэтому обычным
         # сообщением.
-        await callback.message.answer(ru.REPLY_GONE)
-        await _drop_button(callback, dialog_id, action)
+        практика = action == ACTION_PRON or action in QUICK_ACTIONS
+        await callback.message.answer(ru.PRACTICE_GONE if практика else ru.REPLY_GONE)
+        if action in ONE_SHOT_ACTIONS:
+            await _drop_button(callback, dialog_id, action)
     except Exception:
         # Замок снимаем только при аварии: иначе юзер до истечения TTL не смог бы
         # повторить то, что не сработало. При удачном нажатии кнопка исчезает
@@ -128,7 +162,12 @@ async def _show_text(
         pinyin=esc(breakdown.pinyin),
         translation=esc(breakdown.translation) or ru.NO_TRANSLATION,
     )
-    markup = answer_keyboard(dialog_id, with_text=False, with_help=_has(callback, ACTION_HELP))
+    markup = answer_keyboard(
+        dialog_id,
+        with_text=False,
+        with_help=_has(callback, ACTION_HELP),
+        with_pron=_has(callback, ACTION_PRON),
+    )
     try:
         # Разбор дописывается в подпись самого голосового: он не может
         # разъехаться с ответом, даже если сверху уже прилетели новые реплики.
@@ -158,3 +197,105 @@ async def _show_help(
         вариантов=len(items),
         из_кэша=from_cache,
     )
+
+
+async def _send_reference(
+    callback: CallbackQuery, user: User, queue, target: PracticeTarget
+) -> None:
+    """Отправить эталон голосом. Синтезируем только когда переслать нечего.
+
+    У реплики бота голос уже лежит в Telegram — пересылка по file_id мгновенна
+    и бесплатна. Синтез нужен исправленной фразе: её вслух ещё никто не говорил.
+    """
+    bot = callback.message.bot
+    chat_id = callback.message.chat.id
+    caption = render_practice(target)[:1024]
+    markup = practice_keyboard(target.dialog_id)
+
+    if target.audio_file_id:
+        await bot.send_voice(chat_id, target.audio_file_id, caption=caption, reply_markup=markup)
+        return
+
+    from app.core.services.dialog import synthesize_voice
+
+    await bot.send_chat_action(chat_id, "record_voice")
+    audio = await synthesize_voice(target.ref_text, user, get_settings())
+    message = await bot.send_voice(
+        chat_id,
+        BufferedInputFile(audio, filename="reference.ogg"),
+        caption=caption,
+        reply_markup=markup,
+    )
+    if message.voice:
+        # Второй раз ту же фразу синтезировать незачем: «Послушать эталон»
+        # заберёт готовый file_id из состояния тренировки.
+        await remember_reference_audio(queue, user, message.voice.file_id)
+
+
+async def _start_practice(
+    callback: CallbackQuery, session: AsyncSession, user: User, queue, dialog_id: int
+) -> None:
+    target = await choose_target(session, user, dialog_id)
+    await start_practice(queue, user, target)
+    await _send_reference(callback, user, queue, target)
+    await _drop_button(callback, dialog_id, ACTION_PRON)
+    await track(
+        session,
+        "practice_started",
+        user_id=user.id,
+        реплика=dialog_id,
+        из_исправления=target.from_correction,
+    )
+    log.info(
+        "эталон отправлен",
+        user_id=str(user.id),
+        реплика=dialog_id,
+        эталон=target.ref_text,
+        из_исправления=target.from_correction,
+    )
+
+
+async def _resolve_target(
+    session: AsyncSession, user: User, queue, dialog_id: int
+) -> PracticeTarget:
+    """Взять фразу из режима, а если он истёк — собрать её заново по реплике."""
+    target = await load_practice(queue, user)
+    if target is not None and target.dialog_id == dialog_id:
+        return target
+    return await choose_target(session, user, dialog_id)
+
+
+async def _listen_again(
+    callback: CallbackQuery, session: AsyncSession, user: User, queue, dialog_id: int
+) -> None:
+    target = await _resolve_target(session, user, queue, dialog_id)
+    await _send_reference(callback, user, queue, target)
+    log.info("эталон переслан", user_id=str(user.id), реплика=dialog_id)
+
+
+async def _try_again(
+    callback: CallbackQuery, session: AsyncSession, user: User, queue, dialog_id: int
+) -> None:
+    target = await _resolve_target(session, user, queue, dialog_id)
+    # Режим гаснет после каждой оценки: иначе юзер, вернувшийся к разговору,
+    # отправлял бы реплики на проверку произношения. «Ещё раз» включает его
+    # обратно, ничего не переозвучивая.
+    await start_practice(queue, user, target)
+    await callback.message.answer(
+        ru.PRACTICE_WAITING.format(text_zh=esc(target.ref_text)),
+        reply_markup=practice_keyboard(dialog_id),
+    )
+    await track(session, "practice_retry", user_id=user.id, реплика=dialog_id)
+    log.info("новая попытка запрошена", user_id=str(user.id), реплика=dialog_id)
+
+
+async def _cancel_practice(
+    callback: CallbackQuery, session: AsyncSession, user: User, queue, dialog_id: int
+) -> None:
+    await stop_practice(queue, user)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest as exc:
+        log.debug("клавиатура тренировки уже убрана", причина=str(exc))
+    await callback.message.answer(ru.PRACTICE_CANCELLED)
+    await track(session, "practice_cancelled", user_id=user.id, реплика=dialog_id)

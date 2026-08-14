@@ -54,7 +54,6 @@ async def process_pronunciation(
         audio_file_id=audio_file_id,
     )
 
-    audio = b""
     try:
         audio = await download_voice(bot, file_id)
         async with session_scope() as session:
@@ -80,7 +79,6 @@ async def process_pronunciation(
         # Не авария: сервис услышал шум или тишину. Режим остаётся включённым,
         # следующее голосовое снова уйдёт на оценку той же фразы.
         log.info("запись не разобрана сервисом оценки", причина=str(exc), эталон=ref_text)
-        await _dump(audio, request_id or "без-id")
         await _say(bot, chat_id, ru.PRON_UNCLEAR, dialog_id)
     except ProviderError as exc:
         log.error(
@@ -94,25 +92,6 @@ async def process_pronunciation(
     except Exception as exc:  # noqa: BLE001  падение оценки не должно ронять воркер
         log.exception("оценка произношения оборвалась", ошибка=repr(exc))
         await _say(bot, chat_id, ru.ERROR_GENERIC, dialog_id)
-
-
-async def _dump(audio: bytes, request_id: str) -> None:
-    """Временно: сохранить неразобранную запись для разбора полётов.
-
-    Убирается после того, как станет понятно, почему живые записи получают
-    полноту 20 там, где синтезированная речь получает 100.
-    """
-    if not audio:
-        return
-    try:
-        import pathlib
-
-        путь = pathlib.Path("/tmp/pron") / f"{request_id}.ogg"
-        путь.parent.mkdir(parents=True, exist_ok=True)
-        путь.write_bytes(audio)
-        log.info("запись сохранена для разбора", путь=str(путь), байт=len(audio))
-    except Exception as exc:  # noqa: BLE001  диагностика не должна ничего ронять
-        log.warning("не удалось сохранить запись", ошибка=repr(exc))
 
 
 async def _say(bot: Any, chat_id: int, text: str, dialog_id: int) -> None:

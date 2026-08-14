@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from typing import Any
@@ -14,7 +15,9 @@ from typing import Any
 from aiogram.types import BufferedInputFile
 
 from app.bot.texts import ru
+from app.config import get_settings
 from app.core.providers.base import ProviderError
+from app.core.providers.http import get_client
 from app.core.services.dialog import VoiceAnswer, make_greeting, run_voice_round
 from app.core.services.recognition import NotRecognized
 from app.db.models import User
@@ -23,6 +26,21 @@ from app.db.session import session_scope
 from app.logging import bind_request, get_logger
 
 log = get_logger("worker")
+
+
+async def _download_voice(bot: Any, file_id: str) -> bytes:
+    """Скачать голосовое через общий прогретый клиент.
+
+    Свой клиент, а не сессия aiogram: та живёт отдельным пулом и прогрева не
+    видит. Канал до файловых серверов Telegram и так узкий — платить сверху
+    ещё и за рукопожатие незачем.
+    """
+    settings = get_settings()
+    file = await bot.get_file(file_id)
+    url = f"https://api.telegram.org/file/bot{settings.bot_token}/{file.file_path}"
+    response = await get_client().get(url, timeout=120.0)
+    response.raise_for_status()
+    return response.content
 
 
 async def _send_answer(bot: Any, chat_id: int, answer: VoiceAnswer) -> str | None:
@@ -81,12 +99,20 @@ async def process_voice_round(
     try:
         audio: bytes | None = None
         if file_id:
-            buffer = await bot.download(file_id)
-            audio = buffer.read()
+            # Индикатор записи и скачивание идут параллельно: последовательно
+            # это добавляло бы юзеру ожидание на ровном месте.
+            audio, _ = await asyncio.gather(
+                _download_voice(bot, file_id),
+                bot.send_chat_action(chat_id, "record_voice"),
+            )
+            мс = round((time.monotonic() - started) * 1000)
             log.info(
                 "голосовое скачано",
                 байт=len(audio),
-                длительность_мс=round((time.monotonic() - started) * 1000),
+                длительность_мс=мс,
+                # Скорость в логе не для красоты: узкий канал до Telegram —
+                # главная статья расхода в бюджете круга.
+                скорость_кбс=round(len(audio) / 1024 / max(мс / 1000, 0.001), 1),
             )
 
         async with session_scope() as session:
@@ -94,7 +120,8 @@ async def process_voice_round(
             if user is None:
                 log.error("пользователь не найден", user_id=user_id)
                 return
-            await bot.send_chat_action(chat_id, "record_voice")
+            if not file_id:
+                await bot.send_chat_action(chat_id, "record_voice")
             answer = await run_voice_round(
                 session, user, audio=audio, text=text, started_at=started
             )

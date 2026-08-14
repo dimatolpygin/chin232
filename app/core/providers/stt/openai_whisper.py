@@ -8,6 +8,9 @@ from app.core.providers.http import get_client
 
 API_URL = "https://api.openai.com/v1/audio/transcriptions"
 
+# Иероглифы в подсказке обязательны — см. комментарий в transcribe.
+PROMPT_HINT = "你好，我们在练习中文口语。Привет, мы практикуем разговорный китайский."
+
 
 class OpenAIWhisperSTT(STTProvider):
     name = "openai_whisper"

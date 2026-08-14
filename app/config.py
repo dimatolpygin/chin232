@@ -67,9 +67,10 @@ class Settings(BaseSettings):
     fish_model: str = "s1"
     # Голос Fish задаётся обязательно. Без reference_id сервис синтезирует
     # каждый раз НОВЫЙ случайный голос — на живой проверке пользователь
-    # насчитал три разных собеседника подряд. По умолчанию 温柔动听女声:
-    # мягкий женский, нейтральный, не клон реального человека.
-    fish_voice_id: str | None = "faccba1a8ac54016bcfc02761285e67f"
+    # насчитал три разных собеседника подряд. Голос выбран заказчиком на слух
+    # из четырёх образцов: 温柔叙事女声 — мягкий женский, повествовательный,
+    # не клон реального человека.
+    fish_voice_id: str | None = "23632847285a487d8e0c6ae5bc593c71"
     speechsuper_app_key: str | None = None
     speechsuper_secret_key: str | None = None
     lavatop_api_key: str | None = None

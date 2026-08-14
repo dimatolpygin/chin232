@@ -94,16 +94,22 @@ async def on_action(
         log.info("повторное нажатие отбито замком", user_id=str(user.id), кнопка=action)
         return
 
+    # Часики гасим ДО работы и ровно один раз. Telegram даёт на ответ секунды:
+    # на живой проверке правка подписи по холодному соединению заняла 37 секунд,
+    # запоздалый ответ отлетел с «query is too old», юзер всё это время смотрел
+    # на крутилку, а хендлер падал с ошибкой.
+    await callback.answer()
+
     try:
         if action == ACTION_TEXT:
             await _show_text(callback, session, user, dialog_id)
         elif action == ACTION_HELP:
             await _show_help(callback, session, user, dialog_id)
-        else:
-            await callback.answer()
     except ReplyNotFound:
         log.warning("реплика для кнопки не найдена", user_id=str(user.id), реплика=dialog_id)
-        await callback.answer(ru.REPLY_GONE, show_alert=True)
+        # Всплывашкой уже не ответить — запрос закрыт выше, поэтому обычным
+        # сообщением.
+        await callback.message.answer(ru.REPLY_GONE)
         await _drop_button(callback, dialog_id, action)
     except Exception:
         # Замок снимаем только при аварии: иначе юзер до истечения TTL не смог бы
@@ -131,14 +137,12 @@ async def _show_text(
         log.warning("не удалось дописать разбор в подпись", причина=str(exc))
         await callback.message.answer(caption)
         await _drop_button(callback, dialog_id, ACTION_TEXT)
-    await callback.answer()
     log.info("текст показан", user_id=str(user.id), реплика=dialog_id)
 
 
 async def _show_help(
     callback: CallbackQuery, session: AsyncSession, user: User, dialog_id: int
 ) -> None:
-    await callback.answer()
     # Подбор вариантов — платный вызов на несколько секунд, юзеру нужен признак
     # жизни: без него кнопка выглядит нажатой впустую.
     await callback.message.bot.send_chat_action(callback.message.chat.id, "typing")

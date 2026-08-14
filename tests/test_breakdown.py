@@ -159,3 +159,19 @@ def test_угловые_скобки_экранируются():
 
     assert esc("1 < 2 & 3") == "1 &lt; 2 &amp; 3"
     assert esc(None) == ""
+
+
+def test_слово_null_не_становится_поправкой():
+    """Регрессия: модель пишет отсутствие значения словом, а не JSON-значением.
+
+    На живой проверке это дошло до юзера сообщением «Небольшая поправка: null».
+    """
+    from app.core.providers.base import _text_or_none
+
+    assert _text_or_none("null") is None
+    assert _text_or_none("None.") is None
+    assert _text_or_none("нет") is None
+    assert _text_or_none("  ") is None
+    assert _text_or_none(None) is None
+    # Осмысленный текст не должен пострадать.
+    assert _text_or_none("Нет нужды в 了") == "Нет нужды в 了"

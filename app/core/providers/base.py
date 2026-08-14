@@ -153,8 +153,15 @@ class LLMProvider(ABC):
         )
 
 
+# Модель регулярно пишет отсутствие значения словом, а не JSON-значением null.
+# На живой проверке это дошло до юзера сообщением «Небольшая поправка: null».
+EMPTY_WORDS = {"null", "none", "nil", "n/a", "-", "—", "нет", "нет ошибок"}
+
+
 def _text_or_none(value: object) -> str | None:
     text = str(value).strip() if value is not None else ""
+    if text.lower().strip(".") in EMPTY_WORDS:
+        return None
     return text or None
 
 

@@ -1,0 +1,32 @@
+"""Подстановка уровня HSK в промпт и темп озвучки."""
+
+from __future__ import annotations
+
+from app.core.services.dialog import HSK_DESCRIPTIONS, _describe_level, _speed
+from app.db.models import User
+
+
+def _user(level: str | None, speed: float = 1.0) -> User:
+    user = User()
+    user.hsk_level = level
+    user.speech_speed = speed
+    return user
+
+
+def test_уровень_подставляется_в_промпт():
+    assert "HSK 1-2" in _describe_level(_user("hsk12"))
+    assert "HSK 5-6" in _describe_level(_user("hsk56"))
+
+
+def test_неизвестный_уровень_падает_на_начальный():
+    assert _describe_level(_user(None)) == HSK_DESCRIPTIONS["hsk12"]
+    assert _describe_level(_user("чепуха")) == HSK_DESCRIPTIONS["hsk12"]
+
+
+def test_начинающим_говорим_медленнее():
+    # На HSK 1-2 обычный темп неразборчив.
+    assert _speed(_user("hsk12")) < _speed(_user("hsk56"))
+
+
+def test_настройка_скорости_пользователя_умножается():
+    assert _speed(_user("hsk56", speed=0.5)) == 0.5

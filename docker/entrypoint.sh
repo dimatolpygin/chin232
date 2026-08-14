@@ -63,9 +63,9 @@ case "$ROLE" in
   worker)
     wait_for_db
     if [ "${ENV:-dev}" = "dev" ]; then
-      exec watchfiles --filter python "arq app.worker.main.WorkerSettings" app
+      exec watchfiles --filter python "python -m app.worker.run" app
     else
-      exec arq app.worker.main.WorkerSettings
+      exec python -m app.worker.run
     fi
     ;;
   migrate)

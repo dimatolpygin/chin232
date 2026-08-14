@@ -58,11 +58,25 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = None
     openrouter_model: str = "openai/gpt-4o-mini"
     openai_api_key: str | None = None
+    whisper_model: str = "whisper-1"
+    openai_tts_model: str = "tts-1"
+    openai_tts_voice: str = "alloy"
     fish_api_key: str | None = None
     fish_model: str = "s1"
+    # Голос Fish выбирается человеком: библиотека там в основном народные клоны
+    # реальных людей, для коммерческого бота нужен дикторский нейтральный.
+    # Пусто — озвучка голосом модели по умолчанию.
+    fish_voice_id: str | None = None
     speechsuper_app_key: str | None = None
     speechsuper_secret_key: str | None = None
     lavatop_api_key: str | None = None
+
+    # --- голосовой круг ---
+    provider_timeout: float = 60.0
+    # Сколько прошлых реплик отдаём модели: длиннее — дороже и медленнее.
+    dialog_history_limit: int = 10
+    # Потолок длины голосового от юзера, секунды.
+    max_voice_duration_sec: int = 120
 
     # --- админы ---
     admin_ids: str = ""

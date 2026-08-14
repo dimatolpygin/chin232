@@ -7,6 +7,8 @@ import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from arq import create_pool
+from arq.connections import RedisSettings
 
 from app.bot.handlers import build_router
 from app.bot.middlewares.logging import LoggingMiddleware
@@ -26,6 +28,13 @@ async def run() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
+    # Пул очереди кладём в workflow-данные: хендлеры получают его аргументом
+    # `queue` и ставят тяжёлое в arq, не выполняя в обработчике апдейта.
+    queue = await create_pool(
+        RedisSettings.from_dsn(settings.redis_url),
+        default_queue_name=settings.redis_prefix + "arq",
+    )
+    dp["queue"] = queue
     # Порядок важен: сначала лог и request_id, потом пользователь в контекст.
     dp.update.outer_middleware(LoggingMiddleware())
     dp.update.outer_middleware(UserMiddleware())
@@ -39,6 +48,7 @@ async def run() -> None:
         await dp.start_polling(bot)
     finally:
         log.info("бот остановлен")
+        await queue.aclose()
         await bot.session.close()
         await dispose_engine()
 

@@ -21,6 +21,8 @@ x-app: &app
     - ./migrations:/app/migrations
     - ./alembic.ini:/app/alembic.ini
     - ./tests:/app/tests
+    # entrypoint тоже примонтирован: правка запуска не должна требовать пересборки
+    - ./docker/entrypoint.sh:/app/docker/entrypoint.sh:ro
 
 services:
   bot:

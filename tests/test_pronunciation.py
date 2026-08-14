@@ -250,6 +250,45 @@ async def test_тишина_просит_перезаписать_а_не_пок
 
 
 @pytest.mark.asyncio
+async def test_пустая_запись_с_шумом_тоже_просит_перезаписать(monkeypatch):
+    """Числа сняты с живой проверки: молчание в микрофон дало не нули.
+
+    Движок вытянул подобие фонем из фонового шума и поставил общий балл 9 при
+    полноте 20 — юзер получил разбор с пятью красными строками вместо просьбы
+    записать заново. Ловим по полноте: она говорит, сколько эталона прозвучало.
+    """
+    шум = {
+        "result": {
+            "overall": 9,
+            "pronunciation": 55,
+            "tone": 11,
+            "fluency": 24,
+            "integrity": 20,
+            "words": [{"word": "我", "tone": "tone3", "scores": {"overall": 55, "tone": 11}}],
+        }
+    }
+    monkeypatch.setattr(speechsuper, "get_client", lambda: FakeClient(шум))
+    with pytest.raises(SpeechUnclear):
+        await _provider().assess(b"wav", "我想聊天气。", "user-1")
+
+
+@pytest.mark.asyncio
+async def test_фраза_сказанная_наполовину_разбор_получает(monkeypatch):
+    """Порог не должен глотать реальную, пусть и неполную, попытку."""
+    половина = {
+        "result": {
+            "overall": 46,
+            "integrity": 55,
+            "tone": 40,
+            "words": [{"word": "我", "tone": "tone3", "scores": {"overall": 46, "tone": 40}}],
+        }
+    }
+    monkeypatch.setattr(speechsuper, "get_client", lambda: FakeClient(половина))
+    result = await _provider().assess(b"wav", "我想聊天气。", "user-1")
+    assert result.overall == 46
+
+
+@pytest.mark.asyncio
 async def test_отказ_сервиса_не_выдаётся_за_плохую_запись(monkeypatch):
     """errId — это наша авария (квота, тариф, подпись), а не шум в микрофоне."""
     отказ = {"errId": 41030, "error": "invalid coreType", "eof": 1}

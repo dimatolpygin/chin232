@@ -35,6 +35,16 @@ TONE_WEIGHT = 0.33
 # charType == 1. Оценивать их нечего.
 CHAR_TYPE_PUNCTUATION = 1
 
+# Полнота (integrity) — сколько от эталона реально прозвучало. Она не про
+# акцент: даже сильный акцент даёт полноту под сотню, если фраза сказана.
+# На живой проверке пустая запись пришла с полнотой 20 и общим баллом 9 —
+# движок вытянул подобие фонем из фонового шума, и нулевой фильтр её пропустил.
+# Порог по полноте вместе с низким общим баллом отсекает именно молчание,
+# а не плохое произношение: сказанная наполовину фраза (полнота около 50)
+# разбор получает.
+MIN_INTEGRITY = 30
+MIN_OVERALL = 30
+
 
 def _sha1(value: str) -> str:
     return hashlib.sha1(value.encode("utf-8")).hexdigest()  # noqa: S324  так требует сервис
@@ -158,11 +168,13 @@ class SpeechSuperPronunciation(PronunciationProvider):
             details["балл"] = result.overall
             details["иероглифов"] = len(result.chars)
 
-        # Тишина и шум приходят не ошибкой, а нулями по всей фразе: сервис
-        # честно оценил то, чего нет. Показывать юзеру «0 из 100» и красные
-        # нули на каждом иероглифе — хуже, чем попросить перезаписать.
-        if not result.chars or _all_zero(result):
-            raise SpeechUnclear(f"сервис не услышал речь: балл {result.overall}")
+        # Тишина и шум приходят не ошибкой, а околонулевыми баллами: сервис
+        # честно оценил то, чего нет. Показывать юзеру «9 из 100» и пять
+        # красных строк — хуже, чем попросить перезаписать.
+        if not result.chars or _no_speech(result):
+            raise SpeechUnclear(
+                f"сервис не услышал речь: балл {result.overall}, полнота {result.integrity}"
+            )
         return result
 
 
@@ -172,8 +184,13 @@ def _error_text(data: object) -> str:
     return str(data)[:300]
 
 
-def _all_zero(result: Pronunciation) -> bool:
-    return (result.overall or 0) == 0 and all((c.overall or 0) == 0 for c in result.chars)
+def _no_speech(result: Pronunciation) -> bool:
+    """Записи с речью здесь быть не может: либо нули, либо фраза не звучала."""
+    overall = result.overall or 0
+    if overall == 0 and all((c.overall or 0) == 0 for c in result.chars):
+        return True
+    integrity = result.integrity
+    return integrity is not None and integrity < MIN_INTEGRITY and overall < MIN_OVERALL
 
 
 def _parse(data: dict[str, object]) -> Pronunciation:

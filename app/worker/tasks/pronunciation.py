@@ -19,7 +19,7 @@ from app.core.services.pronunciation import PracticeTarget, assess_attempt, stop
 from app.db.models import User
 from app.db.session import session_scope
 from app.logging import bind_request, get_logger
-from app.worker.tasks.voice import download_voice
+from app.worker.tasks.voice import download_voice, refund_quietly
 
 log = get_logger("worker")
 
@@ -84,6 +84,9 @@ async def process_pronunciation(
         # Не авария: сервис услышал шум или тишину. Режим остаётся включённым,
         # следующее голосовое снова уйдёт на оценку той же фразы.
         log.info("запись не разобрана сервисом оценки", причина=str(exc), эталон=ref_text)
+        # Разбора юзер не получил, а бот просит записать ту же фразу заново:
+        # брать за это слот из дневной нормы нечестно.
+        await refund_quietly(ctx, user_id, KIND_CHECK)
         await _say(bot, chat_id, ru.PRON_UNCLEAR, dialog_id)
     except ProviderError as exc:
         log.error(
@@ -93,9 +96,11 @@ async def process_pronunciation(
             http_код=exc.status_code,
             тело_ответа=(exc.body or "")[:1000],
         )
+        await refund_quietly(ctx, user_id, KIND_CHECK)
         await _say(bot, chat_id, ru.PRON_FAILED, dialog_id)
     except Exception as exc:  # noqa: BLE001  падение оценки не должно ронять воркер
         log.exception("оценка произношения оборвалась", ошибка=repr(exc))
+        await refund_quietly(ctx, user_id, KIND_CHECK)
         await _say(bot, chat_id, ru.ERROR_GENERIC, dialog_id)
 
 

@@ -191,7 +191,9 @@ class LLMProvider(ABC):
             # Формат сломан, но иероглифы в ответе есть — круг докручиваем.
             return LlmReply(reply_zh=str(raw))
         return LlmReply(
-            reply_zh=str(data.get("reply_zh") or "").strip(),
+            # Через тот же отсев, что и остальные поля: модель пишет отсутствие
+            # ответа словом «null», и на живой проверке бот озвучил его вслух.
+            reply_zh=_text_or_none(data.get("reply_zh")) or "",
             pinyin=_text_or_none(data.get("pinyin")),
             translation=_text_or_none(data.get("translation")),
             correction=_text_or_none(data.get("correction")),

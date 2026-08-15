@@ -233,6 +233,36 @@ async def consume(queue, session: AsyncSession, user: User, kind: str) -> Quota:
     return Quota(kind=kind, used=used, limit=limit, trial=trial, allowed=True)
 
 
+async def refund(queue, session: AsyncSession, user: User, kind: str) -> None:
+    """Вернуть списанное, если действие не состоялось.
+
+    Списываем до работы, значит за сорвавшийся круг юзер уже заплатил слотом.
+    Внешний сервис отвалился не по его вине, и брать за это из дневной нормы
+    нечестно — тем более что бот тут же просит повторить.
+    """
+    key = usage_key(user, kind)
+    used = int(await queue.decr(key))
+    if used < 0:
+        # Счётчик умер по TTL между списанием и возвратом: DECR создал его
+        # заново, со значением −1 и без срока жизни. Убираем — отсутствие
+        # ключа и есть ноль.
+        await queue.delete(key)
+        used = 0
+    await session.execute(
+        text(
+            "UPDATE daily_usage SET messages = GREATEST(messages - :messages, 0), "
+            "checks = GREATEST(checks - :checks, 0) WHERE user_id = :user_id AND date = :day"
+        ),
+        {
+            "user_id": user.id,
+            "day": local_today(user),
+            "messages": 1 if kind == KIND_MESSAGE else 0,
+            "checks": 1 if kind == KIND_CHECK else 0,
+        },
+    )
+    log.info("списание возвращено", user_id=str(user.id), счётчик=kind, израсходовано=used)
+
+
 # --- напоминание об обновлении лимита ----------------------------------------
 #
 # Кнопка «Напомнить завтра» обязана действительно напоминать, иначе это обман.

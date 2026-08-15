@@ -85,6 +85,19 @@ def test_слово_null_в_исправленной_фразе_не_стано�
     assert reply.corrected_zh is None
 
 
+def test_слово_null_вместо_ответа_не_доезжает_до_озвучки():
+    """Найдено живой проверкой: бот прислал голосовое со словом «null».
+
+    Модель на бессмысленной реплике решила, что отвечать нечего, и написала
+    отсутствие ответа словом. Отсев пустышек стоял на всех полях, кроме самого
+    ответа, — «null» уехал в озвучку, в подпись и в базу.
+    """
+    reply = _reply_from('{"reply_zh": "null", "correction": "Опечатка в слове."}')
+    assert reply.reply_zh == ""
+    # Поправка при этом остаётся: она осмысленная и юзеру полезна.
+    assert reply.correction == "Опечатка в слове."
+
+
 def test_неизвестный_провайдер_падает_с_понятным_текстом():
     settings = Settings(tts_provider="неведомый", fish_api_key="x", **BASE)  # type: ignore[arg-type]
     with pytest.raises(ProviderError) as exc:

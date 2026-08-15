@@ -64,6 +64,10 @@ class FakeRedis:
         self.store[key] = self.store.get(key, 0) - 1
         return self.store[key]
 
+    async def delete(self, key):
+        self.store.pop(key, None)
+        self.ttl.pop(key, None)
+
     async def expire(self, key, seconds):
         self.ttl[key] = seconds
 
@@ -302,6 +306,26 @@ async def test_отказ_не_пишется_в_историю_расхода()
     было = len(session.executed)
     await lim.consume(redis, session, user, lim.KIND_MESSAGE)
     assert len(session.executed) == было
+
+
+@pytest.mark.asyncio
+async def test_сорвавшийся_круг_возвращает_списанное():
+    """Списываем до работы — значит за несостоявшийся круг надо вернуть слот."""
+    session, redis, user = FakeSession(None), FakeRedis(), _user()
+    await lim.consume(redis, session, user, lim.KIND_MESSAGE)
+    await lim.refund(redis, session, user, lim.KIND_MESSAGE)
+    assert (await lim.peek(redis, session, user, lim.KIND_MESSAGE)).used == 0
+    sql, params = session.executed[-1]
+    # История расхода тоже откатывается, иначе прогресс насчитает лишнего.
+    assert "GREATEST" in sql and params["messages"] == 1
+
+
+@pytest.mark.asyncio
+async def test_возврат_не_уводит_счётчик_в_минус():
+    """Счётчик мог умереть по TTL между списанием и возвратом."""
+    session, redis, user = FakeSession(None), FakeRedis(), _user()
+    await lim.refund(redis, session, user, lim.KIND_CHECK)
+    assert (await lim.peek(redis, session, user, lim.KIND_CHECK)).used == 0
 
 
 @pytest.mark.asyncio

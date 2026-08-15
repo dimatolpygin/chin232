@@ -20,8 +20,8 @@ from app.bot.texts import ru
 from app.config import get_settings
 from app.core.providers.base import ProviderError
 from app.core.providers.http import get_client
-from app.core.services.dialog import VoiceAnswer, make_greeting, run_voice_round
-from app.core.services.limits import KIND_MESSAGE, peek
+from app.core.services.dialog import EmptyReply, VoiceAnswer, make_greeting, run_voice_round
+from app.core.services.limits import KIND_MESSAGE, peek, refund
 from app.core.services.recognition import NotRecognized
 from app.db.models import User
 from app.db.repositories.dialogs import set_audio_file_id
@@ -66,8 +66,35 @@ async def _send_answer(bot: Any, chat_id: int, answer: VoiceAnswer, footer: str 
     return message.voice.file_id if message.voice else None
 
 
+async def refund_quietly(ctx: dict[str, Any], user_id: str, kind: str) -> None:
+    """Вернуть списанный слот за круг, который не состоялся.
+
+    Сам возврат не должен ронять обработку ошибки, ради которой его позвали:
+    юзеру важнее получить понятное сообщение, чем ровный счётчик.
+    """
+    queue = ctx.get("redis")
+    if queue is None:
+        return
+    try:
+        async with session_scope() as session:
+            user = await session.get(User, uuid.UUID(user_id))
+            if user is not None:
+                await refund(queue, session, user, kind)
+    except Exception:  # noqa: BLE001
+        log.warning("не удалось вернуть списание", user_id=user_id, счётчик=kind)
+
+
 async def _fail(bot: Any, chat_id: int, exc: Exception, этап: str) -> None:
     """Сбой внешнего сервиса не должен ронять бота: юзер видит понятное сообщение."""
+    if isinstance(exc, EmptyReply):
+        # Не авария: модель сочла, что отвечать нечего. Озвучивать нечего, но и
+        # молчать нельзя — просим сказать иначе.
+        log.info("модель не дала ответа", этап=этап, причина=str(exc))
+        try:
+            await bot.send_message(chat_id, ru.EMPTY_REPLY)
+        except Exception:  # noqa: BLE001
+            log.warning("не удалось отправить просьбу переформулировать", chat_id=chat_id)
+        return
     if isinstance(exc, NotRecognized):
         # Это не авария, а просьба повторить: текст юзеру другой.
         log.info("речь не распознана", этап=этап, причина=str(exc))
@@ -143,6 +170,8 @@ async def process_voice_round(
                 await set_audio_file_id(session, answer.dialog_id, voice_file_id)
         log.info("круг отправлен юзеру", длительность_сек=answer.elapsed_sec, chat_id=chat_id)
     except Exception as exc:  # noqa: BLE001  падение круга не должно ронять воркер
+        # Слот списан ботом до постановки в очередь, а круга не случилось.
+        await refund_quietly(ctx, user_id, KIND_MESSAGE)
         await _fail(bot, chat_id, exc, "круг")
 
 

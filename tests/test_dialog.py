@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
+from app.config import get_settings
+from app.core.providers.base import LlmReply
+from app.core.services import dialog
 from app.core.services.dialog import HSK_DESCRIPTIONS, _speed, describe_level
 from app.db.models import User
 
@@ -45,3 +50,46 @@ def test_голос_fish_задан_по_умолчанию():
         redis_url="redis://localhost:6379/5",
     )  # type: ignore[call-arg]
     assert settings.fish_voice_id, "голос Fish не задан — собеседник будет меняться каждую реплику"
+
+
+@pytest.mark.asyncio
+async def test_ответ_без_иероглифов_не_уходит_в_озвучку(monkeypatch):
+    """Найдено живой проверкой: бот прислал голосовое со словом «null».
+
+    Проверка стоит там, где ответ модели рождается: иначе пустая фраза уедет
+    и в озвучку, и в подпись, и в базу — а оттуда её потом возьмут «Текст» и
+    эталон произношения.
+    """
+
+    class Модель:
+        async def reply(self, _prompt, _history):
+            return LlmReply(reply_zh="", correction="Опечатка в слове.")
+
+    async def промпт(_session, _code):
+        return "система {hsk_level} {topic}"
+
+    async def событие(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(dialog, "get_prompt", промпт)
+    monkeypatch.setattr(dialog, "get_llm", lambda _settings: Модель())
+    monkeypatch.setattr(dialog, "track", событие)
+
+    with pytest.raises(dialog.EmptyReply):
+        await dialog._ask_llm(None, _user("hsk12"), "dialog_system", [], get_settings())
+
+
+@pytest.mark.asyncio
+async def test_нормальный_ответ_проходит_проверку(monkeypatch):
+    class Модель:
+        async def reply(self, _prompt, _history):
+            return LlmReply(reply_zh="你好！")
+
+    async def промпт(_session, _code):
+        return "система {hsk_level} {topic}"
+
+    monkeypatch.setattr(dialog, "get_prompt", промпт)
+    monkeypatch.setattr(dialog, "get_llm", lambda _settings: Модель())
+
+    reply = await dialog._ask_llm(None, _user("hsk12"), "dialog_system", [], get_settings())
+    assert reply.reply_zh == "你好！"

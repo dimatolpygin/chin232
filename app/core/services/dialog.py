@@ -107,6 +107,10 @@ async def synthesize_voice(text: str, user: User, settings: Settings) -> bytes:
     return await to_voice_ogg(speech.audio, source_format=speech.fmt)
 
 
+class EmptyReply(RuntimeError):
+    """Модель не дала фразы, которую можно произнести."""
+
+
 async def _ask_llm(
     session: AsyncSession,
     user: User,
@@ -116,7 +120,29 @@ async def _ask_llm(
 ) -> LlmReply:
     template = await get_prompt(session, prompt_code)
     system_prompt = template.format(hsk_level=describe_level(user), topic=user.topic or TOPIC_FREE)
-    return await get_llm(settings).reply(system_prompt, history)
+    reply = await get_llm(settings).reply(system_prompt, history)
+
+    # Дальше по кругу фраза идёт в озвучку, в подпись и в базу, откуда её потом
+    # возьмут «Текст» и эталон произношения. Ответ без единого иероглифа ломает
+    # всё это разом: на живой проверке бот озвучил слово «null». Проверка стоит
+    # здесь — в единственном месте, где ответ модели рождается.
+    if not has_han(reply.reply_zh):
+        await track(
+            session,
+            "llm_empty_reply",
+            user_id=user.id,
+            промпт=prompt_code,
+            ответ=reply.reply_zh[:200],
+        )
+        log.warning(
+            "модель не дала китайской фразы",
+            user_id=str(user.id),
+            промпт=prompt_code,
+            ответ=reply.reply_zh[:200],
+            поправка=(reply.correction or "")[:200],
+        )
+        raise EmptyReply(f"промпт {prompt_code} вернул ответ без иероглифов")
+    return reply
 
 
 async def make_greeting(session: AsyncSession, user: User) -> VoiceAnswer:

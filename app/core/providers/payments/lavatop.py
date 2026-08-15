@@ -62,9 +62,9 @@ class LavaTopPayments(PaymentProvider):
             raise ProviderError(self.name, "init", "не задан LAVATOP_API_KEY")
         self._key = settings.lavatop_api_key
         self._base = settings.lavatop_api_url.rstrip("/")
-        # Вебхук подписывается тем же ключом, если отдельный не задан: в
-        # кабинете lava.top для вебхука так и выбирается «API-ключ». Отдельная
-        # переменная оставлена на случай, когда там задают свой секрет.
+        # Секрет вебхука задаётся в кабинете отдельно от ключа API: платёжка
+        # присылает обратно ту строку, которую там вписали. Если своей нет,
+        # сверяем с ключом API — тогда в кабинете вписывается он же.
         self._webhook_secret = settings.lavatop_webhook_secret or settings.lavatop_api_key
         self._timeout = settings.provider_timeout
 

@@ -80,8 +80,10 @@ class Settings(BaseSettings):
     speechsuper_secret_key: str | None = None
     lavatop_api_key: str | None = None
     lavatop_api_url: str = "https://gate.lava.top"
-    # Секрет вебхука. Пусто — сверяем с самим ключом API: в кабинете lava.top
-    # для вебхука так и выбирается «API-ключ».
+    # Секрет вебхука. Его задаём мы сами при добавлении вебхука в кабинете
+    # lava.top (тип аутентификации «API key вашего сервиса», до 80 символов),
+    # и платёжка присылает его заголовком X-Api-Key. Пусто — сверяем с ключом
+    # API, тогда в кабинете вписывается он же.
     lavatop_webhook_secret: str | None = None
 
     # --- голосовой круг ---

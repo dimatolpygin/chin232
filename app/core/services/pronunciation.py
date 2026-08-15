@@ -122,7 +122,7 @@ def practice_key(user: User) -> str:
     return get_settings().redis_key("practice", str(user.id))
 
 
-async def start_practice(queue, user: User, target: PracticeTarget) -> None:
+async def _save_practice(queue, user: User, target: PracticeTarget) -> None:
     await queue.set(
         practice_key(user),
         json.dumps(
@@ -138,6 +138,10 @@ async def start_practice(queue, user: User, target: PracticeTarget) -> None:
         ),
         ex=PRACTICE_TTL_SEC,
     )
+
+
+async def start_practice(queue, user: User, target: PracticeTarget) -> None:
+    await _save_practice(queue, user, target)
     log.info(
         "режим «повтори за мной» включён",
         user_id=str(user.id),
@@ -178,7 +182,10 @@ async def remember_reference_audio(queue, user: User, file_id: str) -> None:
     if target is None:
         return
     target.audio_file_id = file_id
-    await start_practice(queue, user, target)
+    # Пишем состояние без записи «режим включён»: режим уже включён, и вторая
+    # такая строка в логе на тот же request_id читается как двойной запуск.
+    await _save_practice(queue, user, target)
+    log.info("голос эталона запомнен", user_id=str(user.id), эталон=target.ref_text)
 
 
 # --- сама оценка -------------------------------------------------------------

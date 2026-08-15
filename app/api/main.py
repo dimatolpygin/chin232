@@ -7,10 +7,13 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import redis.asyncio as aioredis
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.api.webhooks import router as webhooks_router
 from app.config import get_settings
 from app.db.session import dispose_engine, get_engine
 from app.logging import configure_logging, get_logger
@@ -21,14 +24,22 @@ log = get_logger("api")
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(app: FastAPI):
     log.info("api запускается", окружение=settings.env, порт=settings.api_port)
+    # Пул очереди на весь процесс: вебхук об оплате не отправляет сообщение сам,
+    # а ставит задачу воркеру — у api нет своего экземпляра бота.
+    app.state.queue = await create_pool(
+        RedisSettings.from_dsn(settings.redis_url),
+        default_queue_name=settings.redis_prefix + "arq",
+    )
     yield
+    await app.state.queue.aclose()
     await dispose_engine()
     log.info("api остановлен")
 
 
 app = FastAPI(title="china_bot API", version="0.1.0", lifespan=lifespan)
+app.include_router(webhooks_router)
 
 
 async def _check_postgres() -> dict[str, Any]:

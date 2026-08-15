@@ -110,7 +110,14 @@ def render_result(result: AssessResult) -> str:
 
 
 def render_left(quota: Quota) -> str:
-    """Строка остатка под ответом: «осталось N из M на сегодня»."""
+    """Строка остатка под ответом: «осталось N из M на сегодня».
+
+    У подписчика — пустая строка. Счётчик показывается затем, чтобы человек
+    спокойно решил про подписку; тому, кто уже решил и заплатил, напоминать об
+    этом под каждым ответом незачем.
+    """
+    if quota.unlimited:
+        return ""
     template = ru.LIMIT_LEFT_CHECKS if quota.kind == KIND_CHECK else ru.LIMIT_LEFT
     line = template.format(left=quota.left, limit=quota.limit)
     return line + (ru.LIMIT_TRIAL if quota.trial else "")

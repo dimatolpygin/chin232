@@ -7,6 +7,7 @@ import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 from arq import create_pool
 from arq.connections import RedisSettings
 
@@ -39,6 +40,15 @@ async def run() -> None:
     dp.update.outer_middleware(LoggingMiddleware())
     dp.update.outer_middleware(UserMiddleware())
     dp.include_router(build_router())
+
+    # Меню команд: без него про раздел подписки знает только тот, кто упёрся
+    # в лимит и увидел кнопку.
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Начать заново"),
+            BotCommand(command="subscription", description="Подписка"),
+        ]
+    )
 
     me = await bot.get_me()
     log.info("бот запускается", бот=f"@{me.username}", окружение=settings.env)

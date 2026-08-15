@@ -24,6 +24,8 @@ SECRET_KEYS = {
     "bot_token",
     "api_key",
     "apikey",
+    # Заголовок, которым подписывается вебхук платёжки: он же ключ API.
+    "x-api-key",
     "secret",
     "secret_key",
     "password",

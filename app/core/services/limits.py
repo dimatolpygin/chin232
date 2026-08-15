@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.events import track
+from app.core.services.billing import has_active_subscription
 from app.db.models import Setting, User
 from app.logging import get_logger
 
@@ -64,10 +65,18 @@ class Quota:
     trial: bool
     # Ставит вызывающая функция: у проверки и у списания разный смысл «влезли».
     allowed: bool
+    # Подписка снимает дневной потолок целиком. Отдельный признак, а не
+    # огромное число в `limit`: строка «осталось 999999 из 1000000» — это не
+    # безлимит, а издевательство.
+    unlimited: bool = False
 
     @property
     def left(self) -> int:
         return max(self.limit - self.used, 0)
+
+
+def _unlimited(kind: str) -> Quota:
+    return Quota(kind=kind, used=0, limit=0, trial=False, allowed=True, unlimited=True)
 
 
 async def get_limits(session: AsyncSession) -> Limits:
@@ -142,6 +151,8 @@ def usage_key(user: User, kind: str, now: datetime | None = None) -> str:
 
 async def peek(queue, session: AsyncSession, user: User, kind: str) -> Quota:
     """Сколько потрачено, ничего не списывая."""
+    if await has_active_subscription(session, user):
+        return _unlimited(kind)
     limits = await get_limits(session)
     limit, trial = limit_for(user, limits, kind)
     raw = await queue.get(usage_key(user, kind))
@@ -172,6 +183,13 @@ async def consume(queue, session: AsyncSession, user: User, kind: str) -> Quota:
     Списываем ДО работы, а не после: платный вызов, сделанный «в долг», уже
     оплачен, отменить его нечем.
     """
+    if await has_active_subscription(session, user):
+        # Единственная точка, где подписка встречается с лимитом. Расход всё
+        # равно дублируется в `daily_usage`: статистика админки и прогресс
+        # считаются по всем, а не только по бесплатным.
+        await _bump_daily(session, user, kind)
+        return _unlimited(kind)
+
     if kind == KIND_CHECK:
         # Общая стена закрывает и разбор. Проверяем до INCR: списывать разбор,
         # который не состоится, нельзя.
@@ -240,6 +258,10 @@ async def refund(queue, session: AsyncSession, user: User, kind: str) -> None:
     Внешний сервис отвалился не по его вине, и брать за это из дневной нормы
     нечестно — тем более что бот тут же просит повторить.
     """
+    if await has_active_subscription(session, user):
+        # Подписчику ничего не списывали: счётчика в redis нет, и DECR завёл бы
+        # его заново со значением −1.
+        return
     key = usage_key(user, kind)
     used = int(await queue.decr(key))
     if used < 0:

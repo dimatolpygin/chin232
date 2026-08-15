@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     # Запасная озвучка на случай сбоя основной. Пусто — фолбэка нет.
     tts_fallback_provider: str | None = "openai"
     pronunciation_provider: str = "speechsuper"
+    payment_provider: str = "lavatop"
 
     # --- ключи внешних сервисов, на этапе 0 не обязательны ---
     openrouter_api_key: str | None = None
@@ -78,6 +79,10 @@ class Settings(BaseSettings):
     speechsuper_core_type: str = "sent.eval.cn"
     speechsuper_secret_key: str | None = None
     lavatop_api_key: str | None = None
+    lavatop_api_url: str = "https://gate.lava.top"
+    # Секрет вебхука. Пусто — сверяем с самим ключом API: в кабинете lava.top
+    # для вебхука так и выбирается «API-ключ».
+    lavatop_webhook_secret: str | None = None
 
     # --- голосовой круг ---
     provider_timeout: float = 60.0

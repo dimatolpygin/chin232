@@ -54,3 +54,21 @@ async def get_or_create_telegram_user(
     )
     await session.flush()
     return user, True
+
+
+async def telegram_chat_id(session: AsyncSession, user_id) -> int | None:
+    """Куда писать пользователю в Telegram.
+
+    В личной переписке chat_id совпадает с telegram_id, а он лежит в
+    `identities`: в самом `users` его нет намеренно, иначе вход через вебапп
+    потребовал бы миграции всей базы.
+    """
+    ext_id = await session.scalar(
+        select(Identity.ext_id).where(
+            Identity.user_id == user_id, Identity.provider == PROVIDER_TELEGRAM
+        )
+    )
+    try:
+        return int(ext_id) if ext_id else None
+    except (TypeError, ValueError):
+        return None

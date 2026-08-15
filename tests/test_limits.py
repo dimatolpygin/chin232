@@ -23,13 +23,32 @@ from app.db.models import Setting, User
 МОСКВА = ZoneInfo("Europe/Moscow")
 
 
+class FakeResult:
+    """Ответ на execute: подписку отдаём, всё прочее пусто."""
+
+    def __init__(self, value=None) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+    def first(self):
+        return None
+
+    def fetchall(self):
+        return []
+
+
 class FakeSession:
     """Подмена сессии: отдаёт строку настроек и копит выполненный SQL."""
 
-    def __init__(self, настройки: dict | None = None) -> None:
+    def __init__(self, настройки: dict | None = None, подписка=None) -> None:
         self.row = Setting(key=lim.SETTINGS_KEY, value=настройки) if настройки is not None else None
         self.added: list[object] = []
         self.executed: list[tuple[str, dict]] = []
+        # Действующая подписка пользователя: её ищет проверка лимита, чтобы
+        # понять, есть ли вообще потолок.
+        self.подписка = подписка
 
     async def get(self, model, key):
         if model is Setting and key == lim.SETTINGS_KEY:
@@ -41,7 +60,7 @@ class FakeSession:
 
     async def execute(self, statement, params=None):
         self.executed.append((str(statement), params or {}))
-        return None
+        return FakeResult(self.подписка)
 
     @property
     def events(self) -> list[str]:
@@ -83,6 +102,15 @@ class FakeRedis:
 
     async def hdel(self, name, field):
         self.hashes.get(name, {}).pop(field, None)
+
+
+def _расход(session) -> list[tuple[str, dict]]:
+    """Только запросы к истории расхода: подписку лимит читает на каждой проверке."""
+    return [(sql, params) for sql, params in session.executed if "daily_usage" in sql]
+
+
+def _история(session) -> int:
+    return len(_расход(session))
 
 
 def _user(дней_назад: int = 30) -> User:
@@ -303,9 +331,10 @@ async def test_отказ_не_пишется_в_историю_расхода()
     """Несостоявшееся действие не должно выглядеть в статистике как сделанное."""
     session, redis, user = FakeSession({"messages": 1}), FakeRedis(), _user()
     await lim.consume(redis, session, user, lim.KIND_MESSAGE)
-    было = len(session.executed)
+    # Считаем только записи расхода: подписку проверка лимита читает каждый раз.
+    было = _история(session)
     await lim.consume(redis, session, user, lim.KIND_MESSAGE)
-    assert len(session.executed) == было
+    assert _история(session) == было
 
 
 @pytest.mark.asyncio
@@ -315,7 +344,7 @@ async def test_сорвавшийся_круг_возвращает_списан
     await lim.consume(redis, session, user, lim.KIND_MESSAGE)
     await lim.refund(redis, session, user, lim.KIND_MESSAGE)
     assert (await lim.peek(redis, session, user, lim.KIND_MESSAGE)).used == 0
-    sql, params = session.executed[-1]
+    sql, params = _расход(session)[-1]
     # История расхода тоже откатывается, иначе прогресс насчитает лишнего.
     assert "GREATEST" in sql and params["messages"] == 1
 

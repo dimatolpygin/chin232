@@ -11,12 +11,14 @@ from collections.abc import Callable
 from app.config import Settings, get_settings
 from app.core.providers.base import (
     LLMProvider,
+    PaymentProvider,
     PronunciationProvider,
     ProviderError,
     STTProvider,
     TTSProvider,
 )
 from app.core.providers.llm.openrouter import OpenRouterLLM
+from app.core.providers.payments.lavatop import LavaTopPayments
 from app.core.providers.pronunciation.speechsuper import SpeechSuperPronunciation
 from app.core.providers.stt.openai_whisper import OpenAIWhisperSTT
 from app.core.providers.tts.fish import FishTTS
@@ -38,6 +40,9 @@ TTS_PROVIDERS: dict[str, Callable[[Settings], TTSProvider]] = {
 PRONUNCIATION_PROVIDERS: dict[str, Callable[[Settings], PronunciationProvider]] = {
     "speechsuper": SpeechSuperPronunciation,
 }
+PAYMENT_PROVIDERS: dict[str, Callable[[Settings], PaymentProvider]] = {
+    "lavatop": LavaTopPayments,
+}
 
 
 # Экземпляры провайдеров живут на процесс: они держат keep-alive соединение,
@@ -48,6 +53,7 @@ _TABLES = {
     "llm": LLM_PROVIDERS,
     "tts": TTS_PROVIDERS,
     "pronunciation": PRONUNCIATION_PROVIDERS,
+    "payments": PAYMENT_PROVIDERS,
 }
 
 
@@ -98,6 +104,11 @@ def get_tts(settings: Settings | None = None) -> TTSProvider:
 def get_pronunciation(settings: Settings | None = None) -> PronunciationProvider:
     settings = settings or get_settings()
     return _cached("pronunciation", settings.pronunciation_provider, settings)
+
+
+def get_payments(settings: Settings | None = None) -> PaymentProvider:
+    settings = settings or get_settings()
+    return _cached("payments", settings.payment_provider, settings)
 
 
 def get_tts_by_name(name: str, settings: Settings | None = None) -> TTSProvider:

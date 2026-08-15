@@ -1,5 +1,6 @@
 """Все модели импортируются здесь: alembic видит их через app.db.base.Base.metadata."""
 
+from app.db.models.billing import Payment, Plan, Subscription
 from app.db.models.daily_usage import DailyUsage
 from app.db.models.dialog import Dialog
 from app.db.models.event import Event
@@ -14,8 +15,11 @@ __all__ = [
     "Dialog",
     "Event",
     "Identity",
+    "Payment",
+    "Plan",
     "Prompt",
     "PronunciationCheck",
     "Setting",
+    "Subscription",
     "User",
 ]

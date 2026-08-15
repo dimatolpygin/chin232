@@ -16,7 +16,9 @@ from app.core.providers.http import close_client, warmup
 from app.db.session import dispose_engine
 from app.logging import clear_request, configure_logging, get_logger
 from app.worker.tasks import (
+    expire_subscriptions,
     greet_user,
+    notify_payment,
     process_pronunciation,
     process_voice_round,
     send_limit_reminders,
@@ -75,7 +77,13 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    functions = [ping, process_voice_round, greet_user, process_pronunciation]
+    functions = [
+        ping,
+        process_voice_round,
+        greet_user,
+        process_pronunciation,
+        notify_payment,
+    ]
     # Каждые четыре минуты: раньше, чем сервер успеет закрыть простаивающее
     # соединение по своему таймауту.
     cron_jobs = [
@@ -83,6 +91,10 @@ class WorkerSettings:
         # Раз в час: у контейнера время UTC, а полночь у пользователя своя, и
         # задача сама решает, чей день уже сменился.
         cron(send_limit_reminders, minute={5}, run_at_startup=False),
+        # Подписка кончается в момент, а не в полночь: проверяем ежечасно.
+        # Доступ и без этого закрывается по дате, задача нужна ради честного
+        # статуса в базе и сообщения человеку.
+        cron(expire_subscriptions, minute={15}, run_at_startup=False),
     ]
     on_startup = on_startup
     on_shutdown = on_shutdown

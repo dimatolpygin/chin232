@@ -31,6 +31,9 @@ class User(Base):
         Float, nullable=False, default=1.0, server_default="1.0"
     )
     topic: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Почта нужна платёжке: счёт выставляется на неё, туда же уходит чек.
+    # Спрашивается один раз перед первой оплатой, для разговора не нужна.
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     tz: Mapped[str] = mapped_column(
         String(64), nullable=False, default="Europe/Moscow", server_default="Europe/Moscow"
     )

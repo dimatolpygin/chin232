@@ -6,6 +6,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.handlers.subscription import show_subscription
 from app.bot.keyboards.limits import (
     LIMIT_PREFIX,
     LIMIT_REMIND,
@@ -98,10 +99,8 @@ async def on_limit_action(
     await callback.answer()
 
     if action == LIMIT_SUBSCRIBE:
-        # Оплата подключается этапом 5. До тех пор кнопка честно говорит, что
-        # именно происходит, а не молчит.
-        await callback.message.answer(ru.SUBSCRIBE_SOON)
-        await track(session, "subscribe_clicked", user_id=user.id, источник="limit_wall")
+        await show_subscription(callback.message, session, user)
+        await track(session, "subscription_opened", user_id=user.id, источник="стена лимита")
         log.info("нажата кнопка подписки", user_id=str(user.id))
         return
 

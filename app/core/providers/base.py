@@ -239,3 +239,69 @@ class PronunciationProvider(ABC):
     @abstractmethod
     async def assess(self, audio_wav: bytes, ref_text: str, user_id: str) -> Pronunciation:
         """Оценить запись по эталонной фразе. Звук — WAV 16 кГц моно 16 бит."""
+
+
+# --- платежи ------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class Invoice:
+    """Выставленный счёт: по этой ссылке юзер платит."""
+
+    external_id: str
+    payment_url: str | None
+    amount: float | None = None
+    currency: str | None = None
+    status: str | None = None
+    raw: dict[str, object] = field(default_factory=dict)
+
+
+# Что случилось с деньгами. Названия свои, а не как у конкретной платёжки:
+# провайдер меняется настройкой, и биллинг не должен знать его словарь.
+EVENT_PAID = "paid"
+EVENT_FAILED = "failed"
+EVENT_CANCELLED = "cancelled"
+EVENT_UNKNOWN = "unknown"
+
+
+@dataclass(slots=True)
+class PaymentEvent:
+    """Разобранный вебхук платёжки."""
+
+    kind: str
+    external_id: str
+    # Контракт первой покупки, если это продление.
+    parent_external_id: str | None = None
+    email: str | None = None
+    amount: float | None = None
+    currency: str | None = None
+    recurring: bool = False
+    # Докуда продлена подписка по версии самой платёжки (событие отмены).
+    expires_at: str | None = None
+    error: str | None = None
+    raw: dict[str, object] = field(default_factory=dict)
+
+
+class PaymentProvider(ABC):
+    """Приём денег. Провайдер меняется настройкой: за проект уже дважды
+    отваливались внешние сервисы, и платёжка — последнее, что можно чинить
+    переписыванием."""
+
+    name: str
+
+    @abstractmethod
+    async def create_invoice(
+        self,
+        offer_id: str,
+        email: str,
+        currency: str,
+        periodicity: str | None = None,
+        **extra: object,
+    ) -> Invoice: ...
+
+    @abstractmethod
+    def verify_webhook(self, headers: dict[str, str], body: bytes) -> bool:
+        """Наш ли это вебхук. Чужой запрос не должен доехать до биллинга."""
+
+    @abstractmethod
+    def parse_webhook(self, payload: dict[str, object]) -> PaymentEvent: ...

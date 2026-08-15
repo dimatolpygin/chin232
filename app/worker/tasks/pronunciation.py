@@ -11,9 +11,10 @@ import uuid
 from typing import Any
 
 from app.bot.keyboards.answer import result_keyboard
-from app.bot.render import render_result
+from app.bot.render import render_left, render_result
 from app.bot.texts import ru
 from app.core.providers.base import ProviderError, SpeechUnclear
+from app.core.services.limits import KIND_CHECK, peek
 from app.core.services.pronunciation import PracticeTarget, assess_attempt, stop_practice
 from app.db.models import User
 from app.db.session import session_scope
@@ -66,9 +67,13 @@ async def process_pronunciation(
             # должен просто нажать запись ещё раз, а не искать кнопку заново.
             if queue is not None:
                 await stop_practice(queue, user)
-        await bot.send_message(
-            chat_id, render_result(result), reply_markup=result_keyboard(dialog_id)
-        )
+            # Разбор списан ботом при приёме записи — здесь только остаток на
+            # экран. Свой счётчик, поэтому и строка своя.
+            текст = render_result(result)
+            if queue is not None:
+                quota = await peek(queue, session, user, KIND_CHECK)
+                текст = f"{текст}\n\n{render_left(quota)}"
+        await bot.send_message(chat_id, текст, reply_markup=result_keyboard(dialog_id))
         log.info(
             "оценка отправлена юзеру",
             chat_id=chat_id,

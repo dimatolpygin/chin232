@@ -7,6 +7,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.handlers.limits import check_left
 from app.bot.keyboards.answer import (
     ACTION_AGAIN,
     ACTION_CANCEL,
@@ -29,6 +30,7 @@ from app.core.services.breakdown import (
     get_suggestions,
     get_text_breakdown,
 )
+from app.core.services.limits import KIND_CHECK, KIND_MESSAGE
 from app.core.services.pronunciation import (
     PracticeTarget,
     choose_target,
@@ -123,6 +125,18 @@ async def on_action(
     # запоздалый ответ отлетел с «query is too old», юзер всё это время смотрел
     # на крутилку, а хендлер падал с ошибкой.
     await callback.answer()
+
+    # Лимит проверяем до работы: и подсказка, и озвучка эталона — платные
+    # вызовы, за стеной их быть не должно. Списания здесь нет: подсказка норму
+    # не тратит, а разбор спишется, когда придёт запись. Замок снимаем — иначе
+    # юзер, у которого лимит обновится через час, до конца TTL не смог бы
+    # нажать ту же кнопку.
+    guarded = {ACTION_HELP: KIND_MESSAGE, ACTION_PRON: KIND_CHECK}.get(action)
+    if guarded is not None and not await check_left(
+        callback.message, session, user, queue, guarded
+    ):
+        await queue.delete(key)
+        return
 
     try:
         if action == ACTION_TEXT:

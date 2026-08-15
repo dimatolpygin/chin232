@@ -15,12 +15,13 @@ from typing import Any
 from aiogram.types import BufferedInputFile
 
 from app.bot.keyboards.answer import answer_keyboard
-from app.bot.render import esc
+from app.bot.render import esc, render_left
 from app.bot.texts import ru
 from app.config import get_settings
 from app.core.providers.base import ProviderError
 from app.core.providers.http import get_client
 from app.core.services.dialog import VoiceAnswer, make_greeting, run_voice_round
+from app.core.services.limits import KIND_MESSAGE, peek
 from app.core.services.recognition import NotRecognized
 from app.db.models import User
 from app.db.repositories.dialogs import set_audio_file_id
@@ -45,12 +46,16 @@ async def download_voice(bot: Any, file_id: str) -> bytes:
     return response.content
 
 
-async def _send_answer(bot: Any, chat_id: int, answer: VoiceAnswer) -> str | None:
+async def _send_answer(bot: Any, chat_id: int, answer: VoiceAnswer, footer: str = "") -> str | None:
     """Отправить голосовое и текст. Возвращает file_id голосового."""
+    # Остаток дневного лимита идёт в подписи самого ответа, а не отдельным
+    # сообщением: человек видит его заранее и решает про подписку спокойно, а
+    # не когда его оборвали на полуслове.
+    caption = esc(answer.text_zh)[:1000] + (f"\n\n{footer}" if footer else "")
     message = await bot.send_voice(
         chat_id,
         BufferedInputFile(answer.audio_ogg, filename="reply.ogg"),
-        caption=esc(answer.text_zh)[:1000],
+        caption=caption,
         # Кнопки разбора идут вместе с голосовым: отдельным сообщением они
         # отвязались бы от своей реплики в потоке диалога.
         reply_markup=answer_keyboard(answer.dialog_id),
@@ -130,7 +135,10 @@ async def process_voice_round(
             answer = await run_voice_round(
                 session, user, audio=audio, text=text, started_at=started
             )
-            voice_file_id = await _send_answer(bot, chat_id, answer)
+            # Списание уже сделал бот перед постановкой задачи — здесь только
+            # читаем остаток, чтобы показать его юзеру.
+            quota = await peek(ctx["redis"], session, user, KIND_MESSAGE)
+            voice_file_id = await _send_answer(bot, chat_id, answer, render_left(quota))
             if voice_file_id:
                 await set_audio_file_id(session, answer.dialog_id, voice_file_id)
         log.info("круг отправлен юзеру", длительность_сек=answer.elapsed_sec, chat_id=chat_id)

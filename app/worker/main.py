@@ -15,7 +15,12 @@ from app.config import get_settings
 from app.core.providers.http import close_client, warmup
 from app.db.session import dispose_engine
 from app.logging import clear_request, configure_logging, get_logger
-from app.worker.tasks import greet_user, process_pronunciation, process_voice_round
+from app.worker.tasks import (
+    greet_user,
+    process_pronunciation,
+    process_voice_round,
+    send_limit_reminders,
+)
 
 settings = get_settings()
 configure_logging(settings.log_level, settings.log_format)
@@ -73,7 +78,12 @@ class WorkerSettings:
     functions = [ping, process_voice_round, greet_user, process_pronunciation]
     # Каждые четыре минуты: раньше, чем сервер успеет закрыть простаивающее
     # соединение по своему таймауту.
-    cron_jobs = [cron(keep_connections_warm, minute=set(range(0, 60, 4)), run_at_startup=False)]
+    cron_jobs = [
+        cron(keep_connections_warm, minute=set(range(0, 60, 4)), run_at_startup=False),
+        # Раз в час: у контейнера время UTC, а полночь у пользователя своя, и
+        # задача сама решает, чей день уже сменился.
+        cron(send_limit_reminders, minute={5}, run_at_startup=False),
+    ]
     on_startup = on_startup
     on_shutdown = on_shutdown
     on_job_start = on_job_start

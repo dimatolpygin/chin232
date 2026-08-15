@@ -11,6 +11,7 @@ import html
 
 from app.bot.texts import ru
 from app.core.providers.pronunciation.speechsuper import LOW_INTEGRITY
+from app.core.services.limits import KIND_CHECK, Quota
 from app.core.services.pronunciation import AssessResult, CharResult, PracticeTarget
 
 # Пороги окраски взяты из демо самого сервиса оценки: ниже 70 — красное, до 85 —
@@ -106,6 +107,13 @@ def render_result(result: AssessResult) -> str:
         # дослушали.
         blocks.append(ru.PRON_PARTIAL)
     return "\n\n".join(blocks)
+
+
+def render_left(quota: Quota) -> str:
+    """Строка остатка под ответом: «осталось N из M на сегодня»."""
+    template = ru.LIMIT_LEFT_CHECKS if quota.kind == KIND_CHECK else ru.LIMIT_LEFT
+    line = template.format(left=quota.left, limit=quota.limit)
+    return line + (ru.LIMIT_TRIAL if quota.trial else "")
 
 
 def render_practice(target: PracticeTarget) -> str:

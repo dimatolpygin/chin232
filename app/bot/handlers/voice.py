@@ -6,10 +6,12 @@ from aiogram import F, Router
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.handlers.limits import spend
 from app.bot.keyboards.hsk import hsk_keyboard
 from app.bot.texts import ru
 from app.config import get_settings
 from app.core.events import track
+from app.core.services.limits import KIND_CHECK, KIND_MESSAGE
 from app.core.services.pronunciation import load_practice, stop_practice
 from app.db.models import User
 from app.logging import get_logger
@@ -50,6 +52,10 @@ async def on_voice(
     # бот ответит на попытку встречным вопросом, а оценки юзер не увидит вовсе.
     target = await load_practice(queue, user)
     if target is not None and target.ref_text:
+        # Разбор произношения списывается со своего счётчика и именно здесь, в
+        # момент записи: нажатие кнопки «Оценка» ещё ничего не разбирает.
+        if await spend(message, session, user, queue, KIND_CHECK) is None:
+            return
         await queue.enqueue_job(
             "process_pronunciation",
             user_id=str(user.id),
@@ -68,6 +74,11 @@ async def on_voice(
             эталон=target.ref_text,
             секунд=voice.duration,
         )
+        return
+
+    # Списываем до постановки в очередь: за стеной лимита не должно уйти ни
+    # одного платного вызова, и проверить это можно прямо по логам воркера.
+    if await spend(message, session, user, queue, KIND_MESSAGE) is None:
         return
 
     await queue.enqueue_job(
@@ -98,6 +109,10 @@ async def on_text(
         await message.answer(ru.PRACTICE_CANCELLED)
 
     await track(session, "text_received", user_id=user.id, знаков=len(message.text or ""))
+    # Текстовая реплика запускает тот же круг с теми же четырьмя сервисами,
+    # значит и стоит столько же — считаем её тем же счётчиком.
+    if await spend(message, session, user, queue, KIND_MESSAGE) is None:
+        return
     await queue.enqueue_job(
         "process_voice_round",
         user_id=str(user.id),

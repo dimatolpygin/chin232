@@ -247,6 +247,43 @@ async def test_разборы_считаются_отдельным_счётчи
 
 
 @pytest.mark.asyncio
+async def test_исчерпанный_лимит_закрывает_и_разбор():
+    """Найдено живой проверкой: за стеной оставался разбор произношения.
+
+    Это самая дорогая операция проекта, и отдавать её тому, кто уже упёрся в
+    бесплатный потолок, значит платить за него из своего кармана.
+    """
+    session, redis, user = FakeSession({"messages": 1}), FakeRedis(), _user()
+    await lim.consume(redis, session, user, lim.KIND_MESSAGE)
+    await lim.consume(redis, session, user, lim.KIND_MESSAGE)  # упёрлись в стену
+
+    отказ = await lim.consume(redis, session, user, lim.KIND_CHECK)
+    assert not отказ.allowed
+    # Стена именно общая — юзеру показывается экран с подпиской, а не «разборы
+    # кончились».
+    assert отказ.kind == lim.KIND_MESSAGE
+    # Счётчик разборов при этом не тронут: несостоявшийся разбор не списывается.
+    assert redis.store.get(lim.usage_key(user, lim.KIND_CHECK)) is None
+
+
+@pytest.mark.asyncio
+async def test_кнопка_оценки_за_стеной_не_нажимается():
+    session, redis, user = FakeSession({"messages": 1}), FakeRedis(), _user()
+    await lim.consume(redis, session, user, lim.KIND_MESSAGE)
+    стена = await lim.blocking_quota(redis, session, user, lim.KIND_CHECK)
+    assert стена is not None and стена.kind == lim.KIND_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_кончившиеся_разборы_разговора_не_отбирают():
+    """Связь односторонняя: так написано в ТЗ 7.6."""
+    session, redis, user = FakeSession({"checks": 1}), FakeRedis(), _user()
+    await lim.consume(redis, session, user, lim.KIND_CHECK)
+    assert await lim.blocking_quota(redis, session, user, lim.KIND_MESSAGE) is None
+    assert (await lim.consume(redis, session, user, lim.KIND_MESSAGE)).allowed
+
+
+@pytest.mark.asyncio
 async def test_расход_дублируется_в_daily_usage():
     """Критерий этапа: история расхода нужна прогрессу и статистике."""
     session, redis, user = FakeSession(None), FakeRedis(), _user()

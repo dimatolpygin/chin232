@@ -149,12 +149,44 @@ async def peek(queue, session: AsyncSession, user: User, kind: str) -> Quota:
     return Quota(kind=kind, used=used, limit=limit, trial=trial, allowed=used < limit)
 
 
+async def blocking_quota(queue, session: AsyncSession, user: User, kind: str) -> Quota | None:
+    """Что именно закрывает действие. None — можно работать.
+
+    Связь счётчиков односторонняя. Исчерпанный дневной лимит закрывает
+    бесплатный доступ целиком, вместе с разбором произношения: это самая
+    дорогая операция проекта, и оставлять её за стеной значит отдавать деньги
+    тому, кто уже упёрся в бесплатный потолок. Обратное неверно — кончившиеся
+    разборы разговора не отбирают, так и написано в ТЗ.
+    """
+    if kind == KIND_CHECK:
+        общий = await peek(queue, session, user, KIND_MESSAGE)
+        if not общий.allowed:
+            return общий
+    свой = await peek(queue, session, user, kind)
+    return None if свой.allowed else свой
+
+
 async def consume(queue, session: AsyncSession, user: User, kind: str) -> Quota:
     """Списать одно действие. `allowed=False` — норма на сегодня исчерпана.
 
     Списываем ДО работы, а не после: платный вызов, сделанный «в долг», уже
     оплачен, отменить его нечем.
     """
+    if kind == KIND_CHECK:
+        # Общая стена закрывает и разбор. Проверяем до INCR: списывать разбор,
+        # который не состоится, нельзя.
+        общий = await peek(queue, session, user, KIND_MESSAGE)
+        if not общий.allowed:
+            await track(
+                session, "limit_reached", user_id=user.id, счётчик=KIND_CHECK, из_за=KIND_MESSAGE
+            )
+            log.info(
+                "разбор закрыт общей стеной лимита, платные вызовы не запускаются",
+                user_id=str(user.id),
+                лимит_сообщений=общий.limit,
+            )
+            return общий
+
     limits = await get_limits(session)
     limit, trial = limit_for(user, limits, kind)
     key = usage_key(user, kind)

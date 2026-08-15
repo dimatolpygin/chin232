@@ -15,7 +15,7 @@ from app.bot.keyboards.limits import (
 )
 from app.bot.texts import ru
 from app.core.events import track
-from app.core.services.limits import KIND_CHECK, Quota, ask_remind, consume, peek
+from app.core.services.limits import KIND_CHECK, Quota, ask_remind, blocking_quota, consume
 from app.db.models import User
 from app.logging import get_logger
 
@@ -61,17 +61,25 @@ async def check_left(message: Message, session: AsyncSession, user: User, queue,
     Нужна там, где само нажатие уже стоит денег (озвучка эталона, подбор
     подсказки), а списание произойдёт позже или не произойдёт вовсе.
     """
-    quota = await peek(queue, session, user, kind)
-    if quota.allowed:
+    quota = await blocking_quota(queue, session, user, kind)
+    if quota is None:
         return True
     log.info(
         "действие отклонено лимитом",
         user_id=str(user.id),
-        счётчик=kind,
+        действие=kind,
+        уперлось_в=quota.kind,
         израсходовано=quota.used,
         лимит=quota.limit,
     )
-    await track(session, "limit_blocked", user_id=user.id, счётчик=kind, лимит=quota.limit)
+    await track(
+        session,
+        "limit_blocked",
+        user_id=user.id,
+        действие=kind,
+        счётчик=quota.kind,
+        лимит=quota.limit,
+    )
     await show_wall(message, quota)
     return False
 

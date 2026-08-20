@@ -46,3 +46,51 @@ jobs:
             exit 1
           fi
           echo "чисто"
+
+  deploy:
+    # Катим только с main и только после зелёных тестов: сервер боевой, там
+    # живой бот и деньги. Ручной запуск оставлен на случай отката.
+    needs: [lint-and-test, secrets-check]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Две выкатки одновременно перетрут друг друга на середине сборки образа.
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    steps:
+      - name: Ключ доступа и отпечаток сервера
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Отпечаток задан заранее: без него ssh либо спросит подтверждение,
+          # либо примет любой сервер, который ответит по этому адресу.
+          echo "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Выкатка на сервер
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            'set -e
+             cd /opt/china_bot
+             git fetch --quiet origin main
+             git reset --hard origin/main
+             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+             docker image prune -f'
+
+      - name: Проверка живости
+        run: |
+          for попытка in 1 2 3 4 5 6 7 8 9 10; do
+            ответ=$(curl -sf --max-time 10 https://chinesetonebot.ru/health || true)
+            case "$ответ" in
+              *'"status":"ok"'*)
+                echo "сервер отвечает: $ответ"
+                exit 0
+                ;;
+            esac
+            echo "попытка $попытка: сервер ещё не поднялся"
+            sleep 10
+          done
+          echo "после выкатки /health так и не ответил" >&2
+          exit 1

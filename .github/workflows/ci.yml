@@ -81,15 +81,17 @@ jobs:
 
       - name: Проверка живости
         run: |
-          for попытка in 1 2 3 4 5 6 7 8 9 10; do
-            ответ=$(curl -sf --max-time 10 https://chinesetonebot.ru/health || true)
-            case "$ответ" in
+          # Имена переменных строго латиницей: bash кириллические идентификаторы
+          # не принимает и падает с "not a valid identifier".
+          for attempt in $(seq 1 15); do
+            answer=$(curl -sf --max-time 10 https://chinesetonebot.ru/health || true)
+            case "$answer" in
               *'"status":"ok"'*)
-                echo "сервер отвечает: $ответ"
+                echo "сервер отвечает: $answer"
                 exit 0
                 ;;
             esac
-            echo "попытка $попытка: сервер ещё не поднялся"
+            echo "попытка $attempt: сервер ещё не поднялся"
             sleep 10
           done
           echo "после выкатки /health так и не ответил" >&2

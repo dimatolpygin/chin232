@@ -1,10 +1,13 @@
-# Боевой оверрайд: свои postgres и redis, без монтирования кода и без watchfiles.
-# docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Боевой оверрайд: свои postgres и redis, всегда с двумя явными -f:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Явные -f заодно отсекают docker-compose.override.yml с dev-монтированиями:
+# на сервере код живёт внутри образа, а не на хосте.
 
 x-app: &app
   image: china_bot:prod
   restart: always
-  volumes: []
   depends_on:
     postgres:
       condition: service_healthy

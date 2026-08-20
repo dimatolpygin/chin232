@@ -1,9 +1,18 @@
-# Dev-режим. postgres16 и redis уже подняты на машине разработки и общие
-# с чужими проектами, поэтому здесь их нет: ходим на host.docker.internal
-# по опубликованным портам. Своя база и свой пользователь china_bot обязательны,
-# префикс ключей redis — china:.
+# Базовый compose, общий для разработки и боевого сервера. Здесь НЕТ монтирования
+# кода: dev-специфика вынесена в docker-compose.override.yml, который compose
+# подхватывает сам при локальном `docker compose up`. Прод собирается явно:
 #
-# Боевой режим: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# и override в этой команде не участвует. Раньше dev-монтирования жили здесь, а
+# прод-оверрайд глушил их пустым `volumes: []` — не работает: пустой список
+# ничего не отменяет, и на сервер уезжал код с хоста вместе с файлом запуска без
+# бита запуска, отчего контейнеры падали в цикле.
+#
+# postgres16 и redis на машине разработки уже подняты и общие с чужими проектами,
+# поэтому здесь их нет: ходим на host.docker.internal по опубликованным портам.
+# Своя база и свой пользователь china_bot обязательны, префикс ключей redis —
+# china:. На сервере база и redis свои, их добавляет docker-compose.prod.yml.
 #
 # Образ собирает только сервис bot. Если дать build всем трём, они одновременно
 # экспортируют один и тот же тег и сборка падает с "image already exists".
@@ -14,15 +23,6 @@ x-app: &app
   restart: unless-stopped
   extra_hosts:
     - "host.docker.internal:host-gateway"
-  volumes:
-    # Код примонтирован: правка .py перезапускает процесс через watchfiles,
-    # пересборка образа нужна только при смене зависимостей.
-    - ./app:/app/app
-    - ./migrations:/app/migrations
-    - ./alembic.ini:/app/alembic.ini
-    - ./tests:/app/tests
-    # entrypoint тоже примонтирован: правка запуска не должна требовать пересборки
-    - ./docker/entrypoint.sh:/app/docker/entrypoint.sh:ro
 
 services:
   bot:

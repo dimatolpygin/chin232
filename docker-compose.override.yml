@@ -1,0 +1,21 @@
+# Только для машины разработки. compose подхватывает этот файл автоматически при
+# `docker compose up`, а в боевой команде с двумя явными -f он не участвует.
+#
+# Код примонтирован: правка .py перезапускает процесс через watchfiles,
+# пересборка образа нужна только при смене зависимостей.
+
+x-mounts: &mounts
+  - ./app:/app/app
+  - ./migrations:/app/migrations
+  - ./alembic.ini:/app/alembic.ini
+  - ./tests:/app/tests
+  # entrypoint тоже примонтирован: правка запуска не должна требовать пересборки
+  - ./docker/entrypoint.sh:/app/docker/entrypoint.sh:ro
+
+services:
+  bot:
+    volumes: *mounts
+  worker:
+    volumes: *mounts
+  api:
+    volumes: *mounts

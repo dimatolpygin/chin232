@@ -1,0 +1,5 @@
+# Windows-разработка + linux-контейнеры: скрипты обязаны уезжать с LF,
+# иначе tini не может выполнить entrypoint и контейнер падает с
+# «exec docker/entrypoint.sh failed: Permission denied».
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf

@@ -22,3 +22,4 @@ venv/
 media/
 logs/
 *.log
+.secrets/

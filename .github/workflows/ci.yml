@@ -61,17 +61,17 @@ jobs:
       - name: Ключ доступа и отпечаток сервера
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           # Отпечаток задан заранее: без него ssh либо спросит подтверждение,
           # либо примет любой сервер, который ответит по этому адресу.
-          echo "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          echo "${{ secrets.SERVER_HOST_KEY }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: Выкатка на сервер
         run: |
           ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
             'set -e
              cd /opt/china_bot
              git fetch --quiet origin main

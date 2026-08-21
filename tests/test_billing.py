@@ -578,3 +578,57 @@ async def test_возврат_закрывает_доступ():
     платежи = [sql for sql in session.executed if "UPDATE payments" in sql]
     assert платежи, "платёж должен помечаться возвратом"
     assert "payment_refunded" in session.events
+
+
+# --- отвергнутый платёжкой адрес ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_отвергнутый_адрес_спрашивается_заново():
+    """Продавец не может купить у себя: платёжка отвечает Incorrect email.
+
+    Человеку нельзя показывать «сервис не ответил»: он будет жать «оплатить»
+    по кругу и получать одно и то же. Адрес стирается и спрашивается заново.
+    """
+    from app.bot.handlers import subscription as sub
+    from app.core.providers.base import ProviderError
+
+    class FakeMessage:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def answer(self, text, **kwargs):
+            self.sent.append(text)
+
+    class FakeQueue:
+        def __init__(self) -> None:
+            self.keys: dict[str, str] = {}
+
+        async def set(self, key, value, ex=None):
+            self.keys[key] = value
+
+    async def падает(*args, **kwargs):
+        raise ProviderError(
+            "lavatop",
+            "invoice",
+            "платёжка отказалась выставить счёт",
+            status_code=400,
+            body='{"error":"Incorrect email to purchase"}',
+        )
+
+    user = _user()
+    user.email = "seller@example.com"
+    message, queue = FakeMessage(), FakeQueue()
+    session = FakeBillingSession(plan=_plan(), user_id=user.id)
+
+    было = sub.start_payment
+    sub.start_payment = падает
+    try:
+        await sub._send_invoice(message, session, user, _plan(), queue)
+    finally:
+        sub.start_payment = было
+
+    assert user.email is None, "адрес должен стереться, иначе повторится та же ошибка"
+    assert queue.keys, "должны снова ждать почту"
+    assert list(queue.keys.values()) == ["monthly"], "выбранный тариф не теряется"
+    assert "не приняла этот адрес" in message.sent[0]

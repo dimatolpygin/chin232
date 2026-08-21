@@ -118,7 +118,14 @@ async def _ask_email(message: Message, user: User, queue, plan: Plan) -> None:
     log.info("запрошена почта для оплаты", user_id=str(user.id), тариф=plan.code)
 
 
-async def _send_invoice(message: Message, session: AsyncSession, user: User, plan: Plan) -> None:
+# Платёжка отвечает на плохой адрес именно так. Продавец, например, не может
+# купить собственный продукт на почту своего же аккаунта — проверено вживую.
+EMAIL_REJECTED_MARK = "Incorrect email"
+
+
+async def _send_invoice(
+    message: Message, session: AsyncSession, user: User, plan: Plan, queue=None
+) -> None:
     """Выставить счёт и отдать юзеру ссылку.
 
     Сбой платёжки здесь — не авария бота: разговор продолжает работать, а юзеру
@@ -137,6 +144,15 @@ async def _send_invoice(message: Message, session: AsyncSession, user: User, pla
             http_код=exc.status_code,
             тело_ответа=(exc.body or "")[:1000],
         )
+        if EMAIL_REJECTED_MARK in (exc.body or "") and queue is not None:
+            # Адрес не подошёл: стираем его и спрашиваем заново, иначе человек
+            # будет жать «оплатить» по кругу и получать одну и ту же ошибку.
+            user.email = None
+            await session.flush()
+            await queue.set(email_key(user), plan.code, ex=EMAIL_WAIT_SEC)
+            await message.answer(ru.SUBSCRIPTION_EMAIL_REJECTED)
+            await track(session, "email_rejected", user_id=user.id, тариф=plan.code)
+            return
         await message.answer(ru.SUBSCRIPTION_ERROR)
         return
 
@@ -193,7 +209,7 @@ async def on_subscription_action(
     if not user.email:
         await _ask_email(callback.message, user, queue, plan)
         return
-    await _send_invoice(callback.message, session, user, plan)
+    await _send_invoice(callback.message, session, user, plan, queue)
 
 
 @router.message(F.text & ~F.text.startswith("/"))
@@ -226,4 +242,4 @@ async def on_email(message: Message, session: AsyncSession, user: User, queue) -
     if plan is None or not plan.offer_id:
         await message.answer(ru.SUBSCRIPTION_NOT_READY)
         return
-    await _send_invoice(message, session, user, plan)
+    await _send_invoice(message, session, user, plan, queue)

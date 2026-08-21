@@ -15,6 +15,7 @@ from app.core.providers.base import (
     EVENT_CANCELLED,
     EVENT_FAILED,
     EVENT_PAID,
+    EVENT_REFUNDED,
     EVENT_UNKNOWN,
     Invoice,
     PaymentEvent,
@@ -33,6 +34,8 @@ INVOICE_PATH = "/api/v3/invoice"
 PAID_EVENTS = {"payment.success", "subscription.recurring.payment.success"}
 FAILED_EVENTS = {"payment.failed", "subscription.recurring.payment.failed"}
 CANCELLED_EVENTS = {"subscription.cancelled"}
+# Возврат покупателю и спор с банком: и то и другое означает, что денег нет.
+REFUND_EVENTS = {"refund.success", "chargeback.initiated"}
 RECURRING_EVENTS = {
     "subscription.recurring.payment.success",
     "subscription.recurring.payment.failed",
@@ -159,6 +162,8 @@ class LavaTopPayments(PaymentProvider):
             kind = EVENT_FAILED
         elif event_type in CANCELLED_EVENTS:
             kind = EVENT_CANCELLED
+        elif event_type in REFUND_EVENTS:
+            kind = EVENT_REFUNDED
         else:
             kind = EVENT_UNKNOWN
 

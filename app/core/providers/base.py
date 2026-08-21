@@ -261,6 +261,10 @@ class Invoice:
 EVENT_PAID = "paid"
 EVENT_FAILED = "failed"
 EVENT_CANCELLED = "cancelled"
+# Деньги ушли обратно: возврат по просьбе покупателя или спор с банком.
+# Доступ по такому платежу закрывается сразу, иначе человек пользуется
+# бесплатно, а заказчик ещё и платит комиссию за спор.
+EVENT_REFUNDED = "refunded"
 EVENT_UNKNOWN = "unknown"
 
 

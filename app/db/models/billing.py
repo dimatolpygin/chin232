@@ -38,6 +38,7 @@ PAY_PENDING = "pending"
 PAY_COMPLETED = "completed"
 PAY_FAILED = "failed"
 PAY_CANCELLED = "cancelled"
+PAY_REFUNDED = "refunded"
 
 
 class Plan(Base):

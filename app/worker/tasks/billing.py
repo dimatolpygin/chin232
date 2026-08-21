@@ -8,7 +8,7 @@ from typing import Any
 
 from app.bot.texts import ru
 from app.core.events import track
-from app.core.providers.base import EVENT_FAILED, EVENT_PAID
+from app.core.providers.base import EVENT_FAILED, EVENT_PAID, EVENT_REFUNDED
 from app.core.services.billing import due_for_reminder, expire_due, get_plan, mark_reminded
 from app.core.services.limits import user_zone
 from app.db.models import User
@@ -77,6 +77,8 @@ async def notify_payment(
                 text = ru.PAYMENT_OK.format(date=date)
         elif kind == EVENT_FAILED:
             text = ru.PAYMENT_FAILED
+        elif kind == EVENT_REFUNDED:
+            text = ru.PAYMENT_REFUNDED
         else:
             # Отмена автопродления: доступ до конца оплаченного срока остаётся,
             # и пугать человека сообщением «подписка отменена» не за что.

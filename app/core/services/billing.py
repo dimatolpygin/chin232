@@ -17,7 +17,13 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.events import track
-from app.core.providers.base import EVENT_CANCELLED, EVENT_FAILED, EVENT_PAID, PaymentEvent
+from app.core.providers.base import (
+    EVENT_CANCELLED,
+    EVENT_FAILED,
+    EVENT_PAID,
+    EVENT_REFUNDED,
+    PaymentEvent,
+)
 from app.core.providers.registry import get_payments
 from app.db.models import Payment, Plan, Subscription, User
 from app.db.models.billing import (
@@ -25,6 +31,7 @@ from app.db.models.billing import (
     PAY_COMPLETED,
     PAY_FAILED,
     PAY_PENDING,
+    PAY_REFUNDED,
     SUB_ACTIVE,
     SUB_CANCELLED,
     SUB_EXPIRED,
@@ -392,6 +399,47 @@ async def apply_event(session: AsyncSession, event: PaymentEvent, provider: str)
             user_id=str(user_id),
             контракт=event.external_id,
             причина=event.error,
+        )
+        return Applied(kind=event.kind, user_id=user_id)
+
+    if event.kind == EVENT_REFUNDED:
+        # Возврат и спор с банком: денег больше нет, значит нет и доступа.
+        # Платёж правим отдельным UPDATE, а не через идемпотентный INSERT:
+        # тот нарочно не трогает уже оплаченные строки, а здесь надо тронуть.
+        await session.execute(
+            text(
+                "UPDATE payments SET status = :refunded, raw = CAST(:raw AS jsonb), "
+                "updated_at = now() WHERE provider = :provider AND external_id = :external"
+            ),
+            {
+                "refunded": PAY_REFUNDED,
+                "raw": _dump(event.raw),
+                "provider": provider,
+                "external": event.external_id,
+            },
+        )
+        closed = await session.execute(
+            text(
+                "UPDATE subscriptions SET status = :expired, expires_at = now(), "
+                "updated_at = now() WHERE user_id = :user_id AND expires_at > now() "
+                "RETURNING id"
+            ),
+            {"expired": SUB_EXPIRED, "user_id": user_id},
+        )
+        revoked = len(closed.fetchall())
+        await track(
+            session,
+            "payment_refunded",
+            user_id=user_id,
+            контракт=event.external_id,
+            закрыто_подписок=revoked,
+        )
+        log.warning(
+            "возврат денег: доступ закрыт",
+            user_id=str(user_id),
+            контракт=event.external_id,
+            закрыто_подписок=revoked,
+            сумма=event.amount,
         )
         return Applied(kind=event.kind, user_id=user_id)
 

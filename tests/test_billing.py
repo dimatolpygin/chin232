@@ -545,3 +545,36 @@ async def test_напоминание_уходит_один_раз():
     session = FakeBillingSession()
     await billing.mark_reminded(session, subscription)
     assert subscription.reminded_at is not None
+
+
+# --- возврат денег ------------------------------------------------------------
+
+
+def test_возврат_и_чарджбэк_разбираются_как_возврат():
+    """Оба события означают одно: денег у заказчика больше нет."""
+    from app.core.providers.base import EVENT_REFUNDED
+
+    возврат = _provider().parse_webhook(_payload("refund.success"))
+    спор = _provider().parse_webhook(_payload("chargeback.initiated"))
+    assert возврат.kind == EVENT_REFUNDED
+    assert спор.kind == EVENT_REFUNDED
+
+
+@pytest.mark.asyncio
+async def test_возврат_закрывает_доступ():
+    """Иначе вернувший деньги пользуется безлимитом бесплатно."""
+    from app.core.providers.base import EVENT_REFUNDED
+
+    user_id = uuid.uuid4()
+    session = FakeBillingSession(plan=_plan(), user_id=user_id)
+    событие = _provider().parse_webhook(_payload("refund.success"))
+
+    applied = await billing.apply_event(session, событие, "lavatop")
+
+    assert applied.kind == EVENT_REFUNDED
+    подписки = [sql for sql in session.executed if "UPDATE subscriptions" in sql]
+    assert подписки, "подписка должна закрываться тем же запросом"
+    assert "expires_at = now()" in подписки[0]
+    платежи = [sql for sql in session.executed if "UPDATE payments" in sql]
+    assert платежи, "платёж должен помечаться возвратом"
+    assert "payment_refunded" in session.events

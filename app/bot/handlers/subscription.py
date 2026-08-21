@@ -23,7 +23,14 @@ from app.bot.texts import ru
 from app.config import get_settings
 from app.core.events import track
 from app.core.providers.base import ProviderError
-from app.core.services.billing import BillingError, active_subscription, get_plan, start_payment
+from app.core.services.billing import (
+    DEFAULT_PLAN,
+    BillingError,
+    active_subscription,
+    get_plan,
+    payable_plans,
+    start_payment,
+)
 from app.core.services.limits import KIND_CHECK, KIND_MESSAGE, get_limits, limit_for, user_zone
 from app.db.models import Plan, User
 from app.db.models.billing import SUB_CANCELLED
@@ -71,32 +78,44 @@ async def show_subscription(message: Message, session: AsyncSession, user: User)
         await message.answer(template.format(date=_date(current.expires_at, user)))
         return
 
-    plan = await get_plan(session)
-    if plan is None:
+    plans = await payable_plans(session)
+    if not plans:
         await message.answer(ru.SUBSCRIPTION_NOT_READY)
-        log.error("тариф не найден в базе", user_id=str(user.id))
+        log.error("нет ни одного тарифа с оффером платёжки", user_id=str(user.id))
         return
 
+    # Первый в списке — подписка картой, по ней и показываем цену в тексте.
+    main = plans[0]
     limits = await get_limits(session)
     messages_limit, _ = limit_for(user, limits, KIND_MESSAGE)
     checks_limit, _ = limit_for(user, limits, KIND_CHECK)
+    # Развилку про СБП показываем, только когда выбирать действительно есть из
+    # чего: пока заказчик не завёл разовый товар, тариф в списке один.
+    template = ru.SUBSCRIPTION_OFFER if len(plans) > 1 else ru.SUBSCRIPTION_OFFER_SINGLE
     await message.answer(
-        ru.SUBSCRIPTION_OFFER.format(
-            title=plan.title,
+        template.format(
+            title=main.title,
             free_messages=messages_limit,
             free_checks=checks_limit,
-            price=money(plan.price),
-            currency=currency_sign(plan.currency),
-            days=plan.duration_days,
+            price=money(main.price),
+            currency=currency_sign(main.currency),
+            days=main.duration_days,
         ),
-        reply_markup=offer_keyboard(money(plan.price), currency_sign(plan.currency)),
+        reply_markup=offer_keyboard(
+            [(plan, money(plan.price), currency_sign(plan.currency)) for plan in plans]
+        ),
     )
 
 
-async def _ask_email(message: Message, user: User, queue) -> None:
-    await queue.set(email_key(user), "1", ex=EMAIL_WAIT_SEC)
+async def _ask_email(message: Message, user: User, queue, plan: Plan) -> None:
+    """Спросить почту и запомнить, за какой тариф человек нажал.
+
+    Выбор способа оплаты сделан кнопкой ДО вопроса про почту, и потерять его
+    нельзя: иначе выбравший СБП получит счёт на карту.
+    """
+    await queue.set(email_key(user), plan.code, ex=EMAIL_WAIT_SEC)
     await message.answer(ru.SUBSCRIPTION_ASK_EMAIL)
-    log.info("запрошена почта для оплаты", user_id=str(user.id))
+    log.info("запрошена почта для оплаты", user_id=str(user.id), тариф=plan.code)
 
 
 async def _send_invoice(message: Message, session: AsyncSession, user: User, plan: Plan) -> None:
@@ -121,10 +140,26 @@ async def _send_invoice(message: Message, session: AsyncSession, user: User, pla
         await message.answer(ru.SUBSCRIPTION_ERROR)
         return
 
+    note = ru.LINK_NOTE_CARD if plan.autorenew else ru.LINK_NOTE_SBP.format(days=plan.duration_days)
     await message.answer(
-        ru.SUBSCRIPTION_LINK.format(price=money(plan.price), currency=currency_sign(plan.currency)),
+        ru.SUBSCRIPTION_LINK.format(
+            price=money(plan.price),
+            currency=currency_sign(plan.currency),
+            note=note,
+        ),
         reply_markup=payment_keyboard(started.payment_url),
     )
+
+
+async def _plan_or_default(session: AsyncSession, code: str) -> Plan | None:
+    """Тариф из кнопки, иначе тариф по умолчанию.
+
+    Пустой или незнакомый код — это старая кнопка из давней переписки или
+    ключ, оставшийся в redis с прошлой версии. Отказывать человеку в оплате
+    из-за этого незачем: молча берём тариф по умолчанию.
+    """
+    plan = await get_plan(session, code) if code else None
+    return plan or await get_plan(session, DEFAULT_PLAN)
 
 
 @router.message(Command("subscription"))
@@ -137,7 +172,8 @@ async def cmd_subscription(message: Message, session: AsyncSession, user: User) 
 async def on_subscription_action(
     callback: CallbackQuery, session: AsyncSession, user: User, queue
 ) -> None:
-    if parse_subscription_action(callback.data or "") != SUB_PAY:
+    parsed = parse_subscription_action(callback.data or "")
+    if parsed is None or parsed[0] != SUB_PAY:
         await callback.answer()
         return
     # Часики гасим до работы: выставление счёта — сетевой вызов, а запоздалый
@@ -145,19 +181,17 @@ async def on_subscription_action(
     # кнопке «Текст» на этапе 2.
     await callback.answer()
 
-    plan = await get_plan(session)
-    if plan is None:
+    plan = await _plan_or_default(session, parsed[1])
+    if plan is None or not plan.offer_id:
+        # Тарифа нет или оффер не заведён в кабинете платёжки: ссылка на оплату
+        # получилась бы битой.
         await callback.message.answer(ru.SUBSCRIPTION_NOT_READY)
-        return
-    if not plan.offer_id:
-        # Оффер не заведён в кабинете платёжки: ссылка получилась бы битой.
-        await callback.message.answer(ru.SUBSCRIPTION_NOT_READY)
-        log.error("у тарифа не задан оффер платёжки", тариф=plan.code)
+        log.error("оплата невозможна: нет тарифа или оффера", тариф=parsed[1] or DEFAULT_PLAN)
         return
 
     await track(session, "subscribe_pay_clicked", user_id=user.id, тариф=plan.code)
     if not user.email:
-        await _ask_email(callback.message, user, queue)
+        await _ask_email(callback.message, user, queue, plan)
         return
     await _send_invoice(callback.message, session, user, plan)
 
@@ -169,8 +203,11 @@ async def on_email(message: Message, session: AsyncSession, user: User, queue) -
     Роутер стоит раньше разговорного, поэтому пропускаем чужое явно: без
     `SkipHandler` любая реплика застревала бы здесь и до круга не доезжала.
     """
-    if not await queue.get(email_key(user)):
+    # В ключе лежит код тарифа, выбранный кнопкой до вопроса про почту.
+    chosen = await queue.get(email_key(user))
+    if not chosen:
         raise SkipHandler
+    chosen = chosen.decode() if isinstance(chosen, bytes) else str(chosen)
 
     email = (message.text or "").strip()
     if not EMAIL_RE.match(email) or len(email) > 320:
@@ -185,8 +222,8 @@ async def on_email(message: Message, session: AsyncSession, user: User, queue) -
     log.info("почта покупателя сохранена", user_id=str(user.id))
     await message.answer(ru.SUBSCRIPTION_EMAIL_SAVED.format(email=esc(email)))
 
-    plan = await get_plan(session)
-    if plan is None:
+    plan = await _plan_or_default(session, chosen)
+    if plan is None or not plan.offer_id:
         await message.answer(ru.SUBSCRIPTION_NOT_READY)
         return
     await _send_invoice(message, session, user, plan)

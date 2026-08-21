@@ -21,6 +21,7 @@ from app.worker.tasks import (
     notify_payment,
     process_pronunciation,
     process_voice_round,
+    remind_expiring,
     send_limit_reminders,
 )
 
@@ -83,6 +84,7 @@ class WorkerSettings:
         greet_user,
         process_pronunciation,
         notify_payment,
+        remind_expiring,
     ]
     # Каждые четыре минуты: раньше, чем сервер успеет закрыть простаивающее
     # соединение по своему таймауту.
@@ -95,6 +97,10 @@ class WorkerSettings:
         # Доступ и без этого закрывается по дате, задача нужна ради честного
         # статуса в базе и сообщения человеку.
         cron(expire_subscriptions, minute={15}, run_at_startup=False),
+        # Раз в сутки: напоминание о конце разового доступа. Час дневной, чтобы
+        # не будить человека ночью, а тем, у кого часовой пояс далёкий, лучше
+        # получить его днём накануне, чем ночью в день окончания.
+        cron(remind_expiring, hour={9}, minute={30}, run_at_startup=False),
     ]
     on_startup = on_startup
     on_shutdown = on_shutdown

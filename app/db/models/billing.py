@@ -53,6 +53,13 @@ class Plan(Base):
     periodicity: Mapped[str] = mapped_column(String(32), nullable=False, server_default="MONTHLY")
     # Идентификатор цены у платёжки. Пусто — оплату включить нельзя.
     offer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Провайдер и способ оплаты у платёжки. Пусто — на усмотрение платёжки:
+    # для рублей она сама подставит карту через SMART_GLOCAL.
+    payment_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Списывается ли следующий платёж сам. У СБП автосписаний не бывает, такой
+    # тариф продаётся разово, и человеку нужно напоминание перед окончанием.
+    autorenew: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     # Чем тариф отличается по лимитам. Пусто — безлимит.
     limits: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
@@ -84,6 +91,9 @@ class Subscription(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False, server_default="lavatop")
     # Контракт первой покупки у платёжки: по нему приходят продления.
     external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Когда напомнили об окончании. Нужно только тарифам без автопродления,
+    # чтобы напоминание ушло один раз, а не каждый час до самого конца.
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -99,6 +99,7 @@ async def _notify(request: Request, applied) -> None:
             kind=applied.kind,
             expires_at=applied.expires_at.isoformat() if applied.expires_at else None,
             renewed=applied.renewed,
+            plan_code=applied.plan_code,
         )
     except Exception as exc:  # noqa: BLE001  деньги уже приняты, падать поздно
         log.error(

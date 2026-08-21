@@ -61,11 +61,28 @@ class Applied:
     expires_at: datetime | None = None
     amount: float | None = None
     currency: str | None = None
+    # По коду тарифа воркер понимает, обещать автопродление или напоминание.
+    plan_code: str | None = None
 
 
 async def get_plan(session: AsyncSession, code: str = DEFAULT_PLAN) -> Plan | None:
     plan = await session.get(Plan, code)
     return plan if plan is not None and plan.active else None
+
+
+async def payable_plans(session: AsyncSession) -> list[Plan]:
+    """Тарифы, которые можно показать юзеру: включены и заведены у платёжки.
+
+    Тариф без `offer_id` — это тариф, по которому ссылка на оплату получится
+    битой, поэтому он не показывается вовсе. Порядок фиксированный: сначала
+    подписка с автопродлением, потом разовые покупки.
+    """
+    result = await session.execute(
+        select(Plan)
+        .where(Plan.active.is_(True), Plan.offer_id.is_not(None))
+        .order_by(Plan.autorenew.desc(), Plan.price)
+    )
+    return list(result.scalars().all())
 
 
 async def active_subscription(session: AsyncSession, user: User) -> Subscription | None:
@@ -111,6 +128,10 @@ async def start_payment(session: AsyncSession, user: User, plan: Plan) -> Starte
         email=user.email,
         currency=plan.currency,
         periodicity=plan.periodicity,
+        # Способ оплаты живёт в тарифе, а не в коде: одна ссылка на оплату —
+        # один способ, платёжка вшивает его прямо в виджет.
+        paymentProvider=plan.payment_provider,
+        paymentMethod=plan.payment_method,
     )
 
     if invoice.amount is not None and abs(float(invoice.amount) - float(plan.price)) > 0.01:
@@ -352,6 +373,7 @@ async def apply_event(session: AsyncSession, event: PaymentEvent, provider: str)
             expires_at=expires,
             amount=event.amount,
             currency=event.currency,
+            plan_code=plan.code,
         )
 
     if event.kind == EVENT_FAILED:
@@ -397,6 +419,35 @@ async def apply_event(session: AsyncSession, event: PaymentEvent, provider: str)
 
     log.warning("неизвестное событие платёжки", событие=event.raw.get("eventType"))
     return Applied(kind=event.kind, user_id=user_id)
+
+
+async def due_for_reminder(session: AsyncSession, within_hours: int = 48) -> list[Subscription]:
+    """Кому пора напомнить, что доступ заканчивается.
+
+    Только тарифы без автопродления: по подписке картой деньги спишутся сами,
+    и напоминание было бы поводом отменить, а не продлить. Отменённую подписку
+    берём тоже: автопродления у неё уже не будет, а доступ кончится.
+    """
+    horizon = datetime.now(UTC) + timedelta(hours=within_hours)
+    result = await session.execute(
+        select(Subscription)
+        .join(Plan, Plan.code == Subscription.plan_code)
+        .where(
+            Plan.autorenew.is_(False),
+            Subscription.status.in_([SUB_ACTIVE, SUB_CANCELLED]),
+            Subscription.reminded_at.is_(None),
+            Subscription.expires_at > datetime.now(UTC),
+            Subscription.expires_at <= horizon,
+        )
+        .order_by(Subscription.expires_at)
+    )
+    return list(result.scalars().all())
+
+
+async def mark_reminded(session: AsyncSession, subscription: Subscription) -> None:
+    """Отметить, что напоминание ушло. Иначе оно уйдёт снова через час."""
+    subscription.reminded_at = datetime.now(UTC)
+    await session.flush()
 
 
 async def expire_due(session: AsyncSession) -> list[uuid.UUID]:

@@ -44,6 +44,7 @@ def _plan() -> Plan:
     plan.duration_days = 30
     plan.periodicity = "MONTHLY"
     plan.offer_id = "836b9fc5-7ae9-4a27-9642-592bc44072b7"
+    plan.autorenew = True
     plan.active = True
     return plan
 
@@ -405,3 +406,142 @@ def test_почта_проверяется_на_явную_ерунду():
     assert not EMAIL_RE.match("你好, как дела")
     assert not EMAIL_RE.match("client@example")
     assert not EMAIL_RE.match("почта без собаки.ru")
+
+
+# --- разовый тариф под СБП ----------------------------------------------------
+
+
+def _once_plan() -> Plan:
+    """Разовая покупка доступа: СБП не умеет автосписаний."""
+    plan = Plan()
+    plan.code = "once30"
+    plan.title = "Доступ на 30 дней"
+    plan.price = Decimal("549")
+    plan.currency = "RUB"
+    plan.duration_days = 30
+    plan.periodicity = "ONE_TIME"
+    plan.offer_id = "836b9fc5-7ae9-4a27-9642-592bc44072b7"
+    plan.payment_provider = "PAY2ME"
+    plan.payment_method = "SBP"
+    plan.autorenew = False
+    plan.active = True
+    return plan
+
+
+class FakeInvoiceProvider:
+    """Запоминает, с чем к нему пришли: проверяем сам запрос, а не ответ."""
+
+    name = "lavatop"
+
+    def __init__(self) -> None:
+        self.kwargs: dict = {}
+
+    async def create_invoice(self, **kwargs):
+        from app.core.providers.base import Invoice
+
+        self.kwargs = kwargs
+        return Invoice(
+            external_id="contract-1",
+            payment_url="https://app.lava.top/pay/contract-1",
+            amount=549,
+            currency="RUB",
+            status="new",
+            raw={},
+        )
+
+
+@pytest.mark.asyncio
+async def test_способ_оплаты_берётся_из_тарифа():
+    """Иначе выбравший СБП получил бы счёт на карту."""
+    provider = FakeInvoiceProvider()
+    plan = _once_plan()
+    user = _user()
+    user.email = "client@example.com"
+    session = FakeBillingSession(plan=plan, user_id=user.id)
+
+    import app.core.services.billing as mod
+
+    было = mod.get_payments
+    mod.get_payments = lambda: provider
+    try:
+        started = await billing.start_payment(session, user, plan)
+    finally:
+        mod.get_payments = было
+
+    assert provider.kwargs["paymentProvider"] == "PAY2ME"
+    assert provider.kwargs["paymentMethod"] == "SBP"
+    assert provider.kwargs["periodicity"] == "ONE_TIME"
+    assert started.payment_url.endswith("contract-1")
+
+
+@pytest.mark.asyncio
+async def test_у_подписки_способ_оплаты_не_навязывается():
+    """Для рублей платёжка сама ставит карту: лишний параметр только сузит выбор."""
+    provider = FakeInvoiceProvider()
+    plan = _plan()
+    user = _user()
+    user.email = "client@example.com"
+    session = FakeBillingSession(plan=plan, user_id=user.id)
+
+    import app.core.services.billing as mod
+
+    было = mod.get_payments
+    mod.get_payments = lambda: provider
+    try:
+        await billing.start_payment(session, user, plan)
+    finally:
+        mod.get_payments = было
+
+    assert provider.kwargs["paymentProvider"] is None
+    assert provider.kwargs["paymentMethod"] is None
+
+
+def test_кнопка_тарифа_несёт_свой_код():
+    """Без кода в кнопке выбор способа терялся бы при выставлении счёта."""
+    from app.bot.keyboards.subscription import offer_keyboard
+
+    подписка = _plan()
+    разовый = _once_plan()
+    markup = offer_keyboard([(подписка, "549", "₽"), (разовый, "549", "₽")])
+    коды = [row[0].callback_data for row in markup.inline_keyboard]
+    assert коды == ["sub:pay:monthly", "sub:pay:once30"]
+
+    тексты = [row[0].text for row in markup.inline_keyboard]
+    assert "Картой" in тексты[0]
+    assert "СБП" in тексты[1] and "30" in тексты[1]
+
+
+def test_старая_кнопка_без_кода_тарифа_не_ломается():
+    """Кнопки из давней переписки живут вечно, нажатие должно работать."""
+    from app.bot.keyboards.subscription import parse_subscription_action
+
+    assert parse_subscription_action("sub:pay:once30") == ("pay", "once30")
+    assert parse_subscription_action("sub:pay") == ("pay", "")
+    assert parse_subscription_action("limits:show") is None
+    assert parse_subscription_action("") is None
+
+
+@pytest.mark.asyncio
+async def test_разовой_оплате_не_обещают_автопродление():
+    from app.worker.tasks.billing import _autorenews
+
+    session = FakeBillingSession(plan=_once_plan())
+    assert await _autorenews(session, "once30") is False
+
+    session = FakeBillingSession(plan=_plan())
+    assert await _autorenews(session, "monthly") is True
+
+
+@pytest.mark.asyncio
+async def test_напоминание_уходит_один_раз():
+    """Задача крутится ежедневно: без отметки человек получал бы её каждый раз."""
+    subscription = Subscription()
+    subscription.user_id = uuid.uuid4()
+    subscription.plan_code = "once30"
+    subscription.status = SUB_ACTIVE
+    subscription.expires_at = datetime.now(UTC) + timedelta(days=1)
+    subscription.reminded_at = None
+
+    session = FakeBillingSession()
+    await billing.mark_reminded(session, subscription)
+    assert subscription.reminded_at is not None

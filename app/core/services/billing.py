@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.events import track
 from app.core.providers.base import (
     EVENT_CANCELLED,
@@ -130,6 +131,7 @@ async def start_payment(session: AsyncSession, user: User, plan: Plan) -> Starte
         raise BillingError("у пользователя нет почты")
 
     provider = get_payments()
+    link = get_settings().bot_link
     invoice = await provider.create_invoice(
         offer_id=plan.offer_id,
         email=user.email,
@@ -139,6 +141,11 @@ async def start_payment(session: AsyncSession, user: User, plan: Plan) -> Starte
         # один способ, платёжка вшивает его прямо в виджет.
         paymentProvider=plan.payment_provider,
         paymentMethod=plan.payment_method,
+        # Все три исхода ведут обратно в бота: и оплата, и отказ, и отмена.
+        # Иначе человек остаётся на странице платёжки и не понимает, куда идти.
+        successful_return_url=link,
+        failure_return_url=link,
+        cancel_return_url=link,
     )
 
     if invoice.amount is not None and abs(float(invoice.amount) - float(plan.price)) > 0.01:

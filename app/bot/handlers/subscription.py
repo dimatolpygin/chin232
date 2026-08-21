@@ -47,6 +47,11 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]{2,}$")
 # сказанная через полчаса совсем по другому поводу.
 EMAIL_WAIT_SEC = 900
 
+# Метка в ключе ожидания: адрес меняют командой, а не в процессе оплаты.
+# После ввода показываем раздел с кнопками, а не выставляем счёт: человек
+# просил сменить почту, а не платить.
+EMAIL_ONLY = "-"
+
 
 def email_key(user: User) -> str:
     return get_settings().redis_key("await_email", str(user.id))
@@ -184,6 +189,23 @@ async def cmd_subscription(message: Message, session: AsyncSession, user: User) 
     await track(session, "subscription_opened", user_id=user.id, источник="команда")
 
 
+@router.message(Command("email"))
+async def cmd_email(message: Message, session: AsyncSession, user: User, queue) -> None:
+    """Сменить почту для оплаты.
+
+    Адрес сохраняется один раз и дальше не спрашивается, поэтому опечатка или
+    неподходящий ящик иначе чинились бы только через нас. Тариф берём по
+    умолчанию: способ оплаты человек выберет кнопкой после ввода адреса.
+    """
+    previous = user.email
+    user.email = None
+    await session.flush()
+    await queue.set(email_key(user), EMAIL_ONLY, ex=EMAIL_WAIT_SEC)
+    await message.answer(ru.SUBSCRIPTION_ASK_EMAIL)
+    await track(session, "email_reset", user_id=user.id)
+    log.info("почта сброшена по команде", user_id=str(user.id), была_задана=bool(previous))
+
+
 @router.callback_query(F.data.startswith(f"{SUB_PREFIX}:"))
 async def on_subscription_action(
     callback: CallbackQuery, session: AsyncSession, user: User, queue
@@ -237,6 +259,11 @@ async def on_email(message: Message, session: AsyncSession, user: User, queue) -
     await track(session, "email_saved", user_id=user.id)
     log.info("почта покупателя сохранена", user_id=str(user.id))
     await message.answer(ru.SUBSCRIPTION_EMAIL_SAVED.format(email=esc(email)))
+
+    if chosen == EMAIL_ONLY:
+        # Пришли из /email: показываем раздел, платить человек не просил.
+        await show_subscription(message, session, user)
+        return
 
     plan = await _plan_or_default(session, chosen)
     if plan is None or not plan.offer_id:

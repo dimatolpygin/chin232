@@ -82,7 +82,7 @@ async def _redraw(callback: CallbackQuery, text: str, markup) -> None:
 
 
 @router.message(Command("settings"))
-@router.message(F.text == ru.MENU_SETTINGS)
+@router.message(F.text == ru.MENU_PROFILE)
 async def cmd_settings(message: Message, session: AsyncSession, user: User) -> None:
     await show_settings(message, user)
     await track(session, "settings_opened", user_id=user.id)

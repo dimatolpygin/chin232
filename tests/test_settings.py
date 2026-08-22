@@ -293,6 +293,6 @@ def test_нижнее_меню_ведёт_в_существующие_разде
     Разойдутся хоть на пробел — кнопка уедет в разговорный роутер и бот ответит
     на неё по-китайски.
     """
-    надписи = [b.text for row in main_menu().keyboard for b in row]
-    assert надписи == list(MENU_BUTTONS)
-    assert set(надписи) == {ru.MENU_TALK, ru.MENU_SETTINGS, ru.MENU_SUBSCRIPTION}
+    ряды = [[b.text for b in row] for row in main_menu().keyboard]
+    assert ряды == [[ru.MENU_TALK, ru.MENU_PROFILE], [ru.MENU_SUBSCRIPTION]]
+    assert [t for row in ряды for t in row] == list(MENU_BUTTONS)

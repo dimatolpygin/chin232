@@ -14,12 +14,20 @@ from app.bot.texts import ru
 
 # Разделы, которые уже есть. «Прогресс» и «Помощь» добавятся своими этапами:
 # кнопка, за которой пусто, хуже отсутствующей.
-MENU_BUTTONS = (ru.MENU_TALK, ru.MENU_SETTINGS, ru.MENU_SUBSCRIPTION)
+#
+# Две строки, а не одна: в один ряд Telegram ужимает надписи до нечитаемого,
+# а «Подписка» отдельной строкой не теряется среди повседневных разделов.
+MENU_ROWS = (
+    (ru.MENU_TALK, ru.MENU_PROFILE),
+    (ru.MENU_SUBSCRIPTION,),
+)
+
+MENU_BUTTONS = tuple(title for row in MENU_ROWS for title in row)
 
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=title) for title in MENU_BUTTONS]],
+        keyboard=[[KeyboardButton(text=title) for title in row] for row in MENU_ROWS],
         resize_keyboard=True,
         # Поле ввода остаётся главным: человек сюда пришёл говорить, а не жать.
         input_field_placeholder=ru.MENU_PLACEHOLDER,

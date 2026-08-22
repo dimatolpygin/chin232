@@ -46,7 +46,7 @@ async def run() -> None:
     await bot.set_my_commands(
         [
             BotCommand(command="start", description="Начать заново"),
-            BotCommand(command="settings", description="Настройки: уровень, голос, темп, тема"),
+            BotCommand(command="settings", description="Профиль: уровень, голос, темп, тема"),
             BotCommand(command="subscription", description="Подписка"),
             BotCommand(command="email", description="Сменить почту для оплаты"),
         ]

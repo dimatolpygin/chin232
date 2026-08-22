@@ -47,6 +47,7 @@ async def run() -> None:
         [
             BotCommand(command="start", description="Начать заново"),
             BotCommand(command="settings", description="Профиль: уровень, голос, темп, тема"),
+            BotCommand(command="progress", description="Прогресс: серия дней и оценки"),
             BotCommand(command="subscription", description="Подписка"),
             BotCommand(command="email", description="Сменить почту для оплаты"),
         ]

@@ -8,10 +8,12 @@
 from __future__ import annotations
 
 import html
+from datetime import date
 
 from app.bot.texts import ru
 from app.core.providers.pronunciation.speechsuper import LOW_INTEGRITY
 from app.core.services.limits import KIND_CHECK, Quota
+from app.core.services.progress import Progress
 from app.core.services.pronunciation import AssessResult, CharResult, PracticeTarget
 
 # Пороги окраски взяты из демо самого сервиса оценки: ниже 70 — красное, до 85 —
@@ -133,3 +135,90 @@ def render_practice(target: PracticeTarget) -> str:
         blocks.append(esc(target.translation))
     blocks.append(ru.PRACTICE_ASK)
     return "\n\n".join(blocks)
+
+
+def plural(count: int, one: str, few: str, many: str) -> str:
+    """«1 день», «2 дня», «5 дней» — с числом.
+
+    Стрик читается вслух («пять дней подряд»), и «5 день» ломает всю фразу.
+    """
+    hundred = count % 100
+    if 11 <= hundred <= 14:
+        return f"{count} {many}"
+    last = count % 10
+    if last == 1:
+        return f"{count} {one}"
+    if 2 <= last <= 4:
+        return f"{count} {few}"
+    return f"{count} {many}"
+
+
+def calendar_rows(progress: Progress) -> list[str]:
+    """Календарь месяца строками по семь дней.
+
+    Слева диапазон чисел, справа квадраты: так строка ровно по неделе и не
+    нужны пустые клетки в начале месяца, которые в переписке выглядят дырой.
+    Рисуем прожитую часть месяца — будущие дни не «пропущены», их ещё не было.
+    """
+    last = progress.today.day
+    rows: list[str] = []
+    for start in range(1, last + 1, 7):
+        end = min(start + 6, last)
+        cells = "".join(
+            ru.PROGRESS_DAY_DONE
+            if date(progress.month.year, progress.month.month, day) in progress.month_days
+            else ru.PROGRESS_DAY_MISS
+            for day in range(start, end + 1)
+        )
+        rows.append(f"{start:02d}–{end:02d}  {cells}")
+    return rows
+
+
+def _score_line(progress: Progress) -> str:
+    if progress.score_avg is None:
+        return ru.PROGRESS_SCORE_NONE
+    line = ru.PROGRESS_SCORE.format(score=progress.score_avg)
+    delta = progress.score_delta
+    if delta is None:
+        return line
+    if delta > 0:
+        return line + ru.PROGRESS_SCORE_UP.format(delta=delta)
+    if delta < 0:
+        return line + ru.PROGRESS_SCORE_DOWN.format(delta=abs(delta))
+    return line + ru.PROGRESS_SCORE_FLAT
+
+
+def render_progress(progress: Progress) -> str:
+    """Экран раздела «Прогресс»."""
+    if progress.empty:
+        # Нули и пустой календарь выглядят как поломка, а не как «вы ещё не
+        # начали»: у человека нет способа отличить одно от другого.
+        return ru.PROGRESS_EMPTY
+
+    if not progress.streak:
+        первая = ru.PROGRESS_STREAK_NONE
+    elif progress.streak == 1:
+        первая = ru.PROGRESS_STREAK_ONE
+    else:
+        первая = ru.PROGRESS_STREAK.format(days=plural(progress.streak, "день", "дня", "дней"))
+    серия = [первая]
+    if progress.best_streak > progress.streak:
+        рекорд = plural(progress.best_streak, "день", "дня", "дней")
+        серия.append(ru.PROGRESS_BEST.format(days=рекорд))
+    if not progress.today_done:
+        серия.append(ru.PROGRESS_TODAY_LEFT)
+
+    календарь = [f"<b>{ru.MONTHS[progress.month.month - 1]} {progress.month.year}</b>"]
+    календарь += calendar_rows(progress)
+
+    итоги = [
+        ru.PROGRESS_TOTALS.format(
+            messages=plural(progress.messages, "сообщение", "сообщения", "сообщений"),
+            checks=plural(progress.checks, "разбор", "разбора", "разборов"),
+        ),
+        _score_line(progress),
+    ]
+
+    return "\n\n".join(
+        [ru.PROGRESS_HEADER, "\n".join(серия), "\n".join(календарь), "\n".join(итоги)]
+    )

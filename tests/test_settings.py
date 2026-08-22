@@ -294,5 +294,5 @@ def test_нижнее_меню_ведёт_в_существующие_разде
     на неё по-китайски.
     """
     ряды = [[b.text for b in row] for row in main_menu().keyboard]
-    assert ряды == [[ru.MENU_TALK], [ru.MENU_PROFILE, ru.MENU_SUBSCRIPTION]]
+    assert ряды == [[ru.MENU_TALK], [ru.MENU_PROFILE, ru.MENU_PROGRESS, ru.MENU_SUBSCRIPTION]]
     assert [t for row in ряды for t in row] == list(MENU_BUTTONS)

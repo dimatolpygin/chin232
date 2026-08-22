@@ -12,14 +12,14 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 from app.bot.texts import ru
 
-# Разделы, которые уже есть. «Прогресс» и «Помощь» добавятся своими этапами:
-# кнопка, за которой пусто, хуже отсутствующей.
+# Разделы, которые уже есть. Кнопка, за которой пусто, хуже отсутствующей,
+# поэтому раздел появляется здесь своим этапом, а не заранее.
 #
 # «Общение» занимает всю первую строку: это состояние по умолчанию и главная
-# кнопка раздела. Остальное вдвоём во второй строке.
+# кнопка раздела. Остальные три — во второй.
 MENU_ROWS = (
     (ru.MENU_TALK,),
-    (ru.MENU_PROFILE, ru.MENU_SUBSCRIPTION),
+    (ru.MENU_PROFILE, ru.MENU_PROGRESS, ru.MENU_SUBSCRIPTION),
 )
 
 MENU_BUTTONS = tuple(title for row in MENU_ROWS for title in row)

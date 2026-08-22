@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.hsk import LEVEL_PREFIX, hsk_keyboard
+from app.bot.keyboards.menu import main_menu
 from app.bot.texts import ru
 from app.core.services.dialog import DEFAULT_HSK, set_hsk_level
 from app.core.services.onboarding import handle_start
@@ -34,7 +35,7 @@ async def cmd_start(
     if result.need_level:
         await message.answer(ru.WELCOME, reply_markup=hsk_keyboard())
     else:
-        await message.answer(ru.WELCOME_BACK)
+        await message.answer(ru.WELCOME_BACK, reply_markup=main_menu())
     log.info("ответ отправлен", user_id=str(user.id), нужен_уровень=result.need_level)
 
 
@@ -55,7 +56,9 @@ async def choose_level(
         text = ru.LEVEL_CHOSEN.format(level=ru.LEVEL_TITLES.get(user.hsk_level, user.hsk_level))
 
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(text)
+    # Нижнее меню появляется вместе с первым ответом: у сообщения не может быть
+    # сразу двух клавиатур, а экран выбора уровня занят инлайновой.
+    await callback.message.answer(text, reply_markup=main_menu())
     await callback.answer()
 
     # Первая фраза уходит в очередь: тяжёлое не выполняется в обработчике апдейта.

@@ -77,8 +77,13 @@ def _speed(user: User) -> float:
     return round(base * (user.speech_speed or 1.0), 2)
 
 
-async def synthesize_voice(text: str, user: User, settings: Settings) -> bytes:
+async def synthesize_voice(
+    text: str, user: User, settings: Settings, voice_id: str | None = None
+) -> bytes:
     """Озвучить ответ. При сбое основного сервиса пробуем запасной.
+
+    `voice_id` перебивает голос из настроек: так звучит образец в разделе
+    «Голос», который слушают до выбора, а не после.
 
     На живой проверке Fish ответил 500 «Inference backend returned empty audio»
     и круг пропал — юзеру пришлось перезаписывать голосовое. Ради этого случая
@@ -89,7 +94,7 @@ async def synthesize_voice(text: str, user: User, settings: Settings) -> bytes:
 
     speed = _speed(user)
     try:
-        speech = await get_tts(settings).synthesize(text, user.voice_id, speed)
+        speech = await get_tts(settings).synthesize(text, voice_id or user.voice_id, speed)
     except ProviderError as exc:
         fallback = settings.tts_fallback_provider
         if not fallback or fallback == settings.tts_provider:
@@ -145,12 +150,22 @@ async def _ask_llm(
     return reply
 
 
-async def make_greeting(session: AsyncSession, user: User) -> VoiceAnswer:
-    """Первая фраза после выбора уровня. Меню для этого не требуется."""
+PROMPT_GREETING = "greeting"
+PROMPT_TOPIC_START = "topic_start"
+
+
+async def make_greeting(
+    session: AsyncSession, user: User, prompt_code: str = PROMPT_GREETING
+) -> VoiceAnswer:
+    """Первая фраза бота: после выбора уровня или после смены темы.
+
+    Промпт разный: посреди разговора здороваться второй раз нельзя, поэтому у
+    смены темы свой текст, а круг один и тот же.
+    """
     settings = get_settings()
     started = time.monotonic()
 
-    reply = await _ask_llm(session, user, "greeting", [], settings)
+    reply = await _ask_llm(session, user, prompt_code, [], settings)
     audio = await synthesize_voice(reply.reply_zh, user, settings)
 
     row = await add_reply(
@@ -162,8 +177,19 @@ async def make_greeting(session: AsyncSession, user: User) -> VoiceAnswer:
         translation=reply.translation,
     )
     elapsed = round(time.monotonic() - started, 2)
-    await track(session, "greeting_sent", user_id=user.id, длительность_сек=elapsed)
-    log.info("приветствие собрано", user_id=str(user.id), длительность_сек=elapsed)
+    await track(
+        session,
+        "greeting_sent",
+        user_id=user.id,
+        длительность_сек=elapsed,
+        промпт=prompt_code,
+    )
+    log.info(
+        "первая фраза собрана",
+        user_id=str(user.id),
+        длительность_сек=elapsed,
+        промпт=prompt_code,
+    )
 
     return VoiceAnswer(
         audio_ogg=audio,

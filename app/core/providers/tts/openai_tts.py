@@ -8,14 +8,26 @@
 from __future__ import annotations
 
 from app.config import Settings
-from app.core.providers.base import ProviderError, Speech, TTSProvider, call_logged
+from app.core.providers.base import ProviderError, Speech, TTSProvider, Voice, call_logged
 from app.core.providers.http import get_client
 
 API_URL = "https://api.openai.com/v1/audio/speech"
 
+# Здесь голоса не клонированные, а собственные, поэтому список короткий и
+# фиксированный. Идентификаторы свои: при переключении провайдера сохранённый
+# у юзера голос от другого сервиса не подойдёт, и раздел покажет «по умолчанию».
+VOICES = (
+    Voice("nova", "Женский мягкий", "спокойный, по умолчанию"),
+    Voice("shimmer", "Женский тёплый", "неспешный"),
+    Voice("alloy", "Нейтральный", "ровный, без выраженного тембра"),
+    Voice("onyx", "Мужской низкий", "плотный дикторский"),
+    Voice("echo", "Мужской спокойный", "ровный разговорный"),
+)
+
 
 class OpenAITTS(TTSProvider):
     name = "openai"
+    VOICES = VOICES
 
     def __init__(self, settings: Settings) -> None:
         if not settings.openai_api_key:

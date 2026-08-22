@@ -16,6 +16,7 @@ from app.core.providers.base import (
     ProviderError,
     STTProvider,
     TTSProvider,
+    Voice,
 )
 from app.core.providers.llm.openrouter import OpenRouterLLM
 from app.core.providers.payments.lavatop import LavaTopPayments
@@ -115,3 +116,14 @@ def get_tts_by_name(name: str, settings: Settings | None = None) -> TTSProvider:
     """Озвучка по имени — для фолбэка, когда основная сбойнула."""
     settings = settings or get_settings()
     return _cached("tts", name, settings)
+
+
+def tts_voices(settings: Settings | None = None) -> tuple[Voice, ...]:
+    """Голоса действующего сервиса озвучки.
+
+    Берём у класса, а не у экземпляра: список нужен, чтобы нарисовать раздел
+    настроек, и требовать ради этого живой ключ провайдера незачем.
+    """
+    settings = settings or get_settings()
+    factory = TTS_PROVIDERS.get(settings.tts_provider)
+    return getattr(factory, "VOICES", ()) if factory is not None else ()

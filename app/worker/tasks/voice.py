@@ -20,7 +20,15 @@ from app.bot.texts import ru
 from app.config import get_settings
 from app.core.providers.base import ProviderError
 from app.core.providers.http import get_client
-from app.core.services.dialog import EmptyReply, VoiceAnswer, make_greeting, run_voice_round
+from app.core.providers.registry import tts_voices
+from app.core.services.dialog import (
+    PROMPT_GREETING,
+    EmptyReply,
+    VoiceAnswer,
+    make_greeting,
+    run_voice_round,
+    synthesize_voice,
+)
 from app.core.services.limits import KIND_MESSAGE, peek, refund
 from app.core.services.recognition import NotRecognized
 from app.db.models import User
@@ -180,8 +188,9 @@ async def greet_user(
     user_id: str,
     chat_id: int,
     request_id: str | None = None,
+    prompt_code: str = PROMPT_GREETING,
 ) -> None:
-    """Первая фраза сразу после выбора уровня."""
+    """Первая фраза: сразу после выбора уровня или после смены темы."""
     bind_request(request_id, user_id=user_id, job=ctx.get("job_id"))
     bot = ctx["bot"]
     try:
@@ -191,10 +200,48 @@ async def greet_user(
                 log.error("пользователь не найден", user_id=user_id)
                 return
             await bot.send_chat_action(chat_id, "record_voice")
-            answer = await make_greeting(session, user)
+            answer = await make_greeting(session, user, prompt_code)
             voice_file_id = await _send_answer(bot, chat_id, answer)
             if voice_file_id:
                 await set_audio_file_id(session, answer.dialog_id, voice_file_id)
         log.info("приветствие отправлено", chat_id=chat_id)
     except Exception as exc:  # noqa: BLE001
         await _fail(bot, chat_id, exc, "приветствие")
+
+
+async def preview_voice(
+    ctx: dict[str, Any],
+    user_id: str,
+    chat_id: int,
+    voice_id: str,
+    request_id: str | None = None,
+) -> None:
+    """Образец голоса из настроек: «Прослушать» до того, как выбрать.
+
+    Синтез платный, поэтому задача, а не хендлер. Фраза короткая и одна на все
+    голоса — так их слышно в сравнении, а не по разным текстам.
+    """
+    bind_request(request_id, user_id=user_id, job=ctx.get("job_id"))
+    bot = ctx["bot"]
+    settings = get_settings()
+    voice = next((v for v in tts_voices(settings) if v.id == voice_id), None)
+    if voice is None:
+        log.warning("образец запрошен для голоса не из списка", голос=voice_id)
+        return
+    try:
+        async with session_scope() as session:
+            user = await session.get(User, uuid.UUID(user_id))
+            if user is None:
+                log.error("пользователь не найден", user_id=user_id)
+                return
+            await bot.send_chat_action(chat_id, "record_voice")
+            audio = await synthesize_voice(ru.VOICE_SAMPLE_TEXT, user, settings, voice_id=voice.id)
+        await bot.send_voice(
+            chat_id,
+            BufferedInputFile(audio, filename="sample.ogg"),
+            caption=ru.VOICE_SAMPLE_CAPTION.format(title=voice.title, note=voice.note),
+        )
+        log.info("образец голоса отправлен", chat_id=chat_id, голос=voice.title)
+    except Exception as exc:  # noqa: BLE001  сбой образца не должен ронять воркер
+        log.error("образец голоса не собрался", голос=voice.title, ошибка=str(exc))
+        await bot.send_message(chat_id, ru.VOICE_SAMPLE_FAILED)

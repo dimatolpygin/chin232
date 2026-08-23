@@ -7,11 +7,12 @@ from typing import Any
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from arq import cron
+from arq import cron, func
 from arq.connections import RedisSettings
 from structlog.contextvars import bind_contextvars
 
 from app.config import get_settings
+from app.core import usage
 from app.core.providers.http import close_client, warmup
 from app.db.session import dispose_engine
 from app.logging import clear_request, configure_logging, get_logger
@@ -23,6 +24,7 @@ from app.worker.tasks import (
     process_pronunciation,
     process_voice_round,
     remind_expiring,
+    run_broadcast,
     send_limit_reminders,
 )
 
@@ -75,6 +77,9 @@ async def on_job_start(ctx: dict[str, Any]) -> None:
 
 async def on_job_end(ctx: dict[str, Any]) -> None:
     log.info("задача завершена", job_id=ctx.get("job_id"))
+    # Хвост журнала расхода: провайдеры копят его в памяти и отдают на чужом
+    # коммите, а у задачи без работы с базой такого коммита может и не быть.
+    await usage.flush_now()
     clear_request()
 
 
@@ -87,6 +92,11 @@ class WorkerSettings:
         process_pronunciation,
         notify_payment,
         remind_expiring,
+        # Рассылка идёт медленно намеренно (двадцать сообщений в секунду), и
+        # общего таймаута в две минуты ей не хватит уже на трёх тысячах
+        # адресатов. Свой таймаут — час, повторов нет: половина разосланного
+        # дважды хуже недоставленного.
+        func(run_broadcast, timeout=3600, max_tries=1),
     ]
     # Каждые четыре минуты: раньше, чем сервер успеет закрыть простаивающее
     # соединение по своему таймауту.

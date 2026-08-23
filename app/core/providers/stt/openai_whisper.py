@@ -68,6 +68,9 @@ class OpenAIWhisperSTT(STTProvider):
                     body=response.text,
                 )
             payload = response.json()
+            # Считают нам минуты звука, а не байты запроса: без этого числа
+            # расход по распознаванию в админке не посчитать.
+            details["секунд"] = payload.get("duration")
 
         text = (payload.get("text") or "").strip()
         segments = payload.get("segments") or []

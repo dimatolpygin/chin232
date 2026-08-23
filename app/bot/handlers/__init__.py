@@ -1,6 +1,15 @@
 from aiogram import Router
 
-from app.bot.handlers import answer, limits, progress, settings, start, subscription, voice
+from app.bot.handlers import (
+    admin,
+    answer,
+    limits,
+    progress,
+    settings,
+    start,
+    subscription,
+    voice,
+)
 
 
 def build_router() -> Router:
@@ -12,6 +21,9 @@ def build_router() -> Router:
     # меню — это команда, а не реплика в разговоре и не адрес для счёта.
     root.include_router(settings.router)
     root.include_router(progress.router)
+    # Раньше подписки и разговора: пока админ набирает текст рассылки, его
+    # сообщение — это текст рассылки, а не реплика в диалоге.
+    root.include_router(admin.router)
     # Раньше разговорного: пока ждём почту для оплаты, текст — это адрес, а не
     # реплика. Всё остальное этот роутер пропускает дальше сам.
     root.include_router(subscription.router)

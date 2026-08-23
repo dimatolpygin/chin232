@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import get_settings
+from app.core import usage
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
@@ -43,13 +44,24 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 @asynccontextmanager
 async def session_scope() -> AsyncIterator[AsyncSession]:
-    """Сессия с автокоммитом на выходе и откатом при исключении."""
+    """Сессия с автокоммитом на выходе и откатом при исключении.
+
+    Заодно дописывает журнал расхода на внешние сервисы. Провайдеры копят его
+    в памяти, чтобы не платить лишним запросом посреди голосового круга, а
+    уезжает он попутно — на ближайшем коммите, чьим бы тот ни был. Откат
+    возвращает записи в буфер: круг сорвался, а деньги за вызовы уже потрачены,
+    и в расходах они обязаны быть видны.
+    """
     async with get_session_factory()() as session:
+        spent: list[usage.Call] = []
         try:
             yield session
+            spent = usage.take()
+            await usage.write(session, spent)
             await session.commit()
         except Exception:
             await session.rollback()
+            usage.give_back(spent)
             raise
 
 

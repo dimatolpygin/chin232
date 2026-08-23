@@ -12,9 +12,10 @@ from datetime import date
 
 from app.bot.texts import ru
 from app.core.providers.pronunciation.speechsuper import LOW_INTEGRITY
-from app.core.services.limits import KIND_CHECK, Quota
+from app.core.services.limits import KIND_CHECK, Limits, Quota
 from app.core.services.progress import Progress
 from app.core.services.pronunciation import AssessResult, CharResult, PracticeTarget
+from app.core.services.stats import Spend, Summary
 
 # Пороги окраски взяты из демо самого сервиса оценки: ниже 70 — красное, до 85 —
 # жёлтое. Свои числа выдумывать нельзя, шкала не линейная.
@@ -222,3 +223,86 @@ def render_progress(progress: Progress) -> str:
     return "\n\n".join(
         [ru.PROGRESS_HEADER, "\n".join(серия), "\n".join(календарь), "\n".join(итоги)]
     )
+
+
+# --- админка -------------------------------------------------------------------
+
+
+def money(value: float) -> str:
+    """Доллары для админки.
+
+    Мелкие суммы округлять до копеек нельзя: расход за сутки на паре юзеров —
+    это центы, и «$0.00» вместо «$0.0184» выглядит как сломанный счётчик.
+    """
+    if value and abs(value) < 1:
+        return f"{value:.4f}"
+    return f"{value:,.2f}".replace(",", " ")
+
+
+def render_stats(summary: Summary) -> str:
+    """Экран статистики: юзеры, активность, деньги."""
+    выручка = (
+        " · ".join(
+            f"{amount:,.0f} {cur}".replace(",", " ") for cur, amount in summary.revenue.items()
+        )
+        or ru.ADMIN_STATS_NO_REVENUE
+    )
+    return ru.ADMIN_STATS.format(
+        users_total=summary.users_total,
+        users_today=summary.users_today,
+        users_week=summary.users_week,
+        active_today=summary.active_today,
+        active_week=summary.active_week,
+        paying=summary.paying,
+        conversion=f"{summary.conversion:.1f}",
+        messages=plural(summary.messages_today, "сообщение", "сообщения", "сообщений"),
+        checks=plural(summary.checks_today, "разбор", "разбора", "разборов"),
+        revenue=выручка,
+    )
+
+
+def render_limits(limits: Limits) -> str:
+    """Экран лимитов. Сами числа стоят на кнопках, здесь только смысл экрана."""
+    строки = [ru.ADMIN_LIMITS]
+    if not limits.messages or not limits.trial_messages:
+        строки.append(ru.ADMIN_LIMITS_ZERO)
+    return "\n\n".join(строки)
+
+
+def render_price(plans: list) -> str:
+    """Экран цены: сколько стоит каждый тариф и предупреждение про оффер."""
+    if not plans:
+        return "\n\n".join([ru.ADMIN_PRICE, ru.ADMIN_PRICE_EMPTY])
+    строки = [
+        ru.ADMIN_PRICE_ROW.format(
+            title=esc(plan.title),
+            price=f"{float(plan.price):,.0f}".replace(",", " "),
+            currency=esc(plan.currency),
+            offer="" if plan.offer_id else ru.ADMIN_PRICE_NO_OFFER,
+        )
+        for plan in plans
+    ]
+    return "\n\n".join([ru.ADMIN_PRICE, "\n".join(строки), ru.ADMIN_PRICE_WARNING])
+
+
+def render_spending(spending: list[Spend], days: int) -> str:
+    """Экран расхода по сервисам за период."""
+    заголовок = ru.ADMIN_SPEND.format(period=ru.SPEND_PERIODS.get(days, f"за {days} дн"))
+    if not spending:
+        return "\n\n".join([заголовок, ru.ADMIN_SPEND_EMPTY])
+
+    строки = []
+    for spend in spending:
+        строка = ru.ADMIN_SPEND_ROW.format(
+            name=ru.PROVIDER_TITLES.get(spend.provider, esc(spend.provider)),
+            cost=money(spend.cost),
+            calls=plural(spend.calls, "вызов", "вызова", "вызовов"),
+            units=f"{spend.units:,.0f}".replace(",", " "),
+            unit=spend.unit,
+        )
+        if spend.errors:
+            строка += ru.ADMIN_SPEND_ERRORS.format(errors=spend.errors)
+        строки.append(строка)
+
+    итог = ru.ADMIN_SPEND_TOTAL.format(cost=money(sum(s.cost for s in spending)))
+    return "\n\n".join([заголовок, "\n".join(строки), итог, ru.ADMIN_SPEND_NOTE])

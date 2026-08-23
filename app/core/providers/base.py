@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
+from app.core import usage
 from app.logging import get_logger
 
 log = get_logger("providers")
@@ -45,6 +46,21 @@ async def call_logged(provider: str, operation: str, **extra: object):
     details: dict[str, object] = {}
     started = time.monotonic()
     log.info("вызов внешнего сервиса", провайдер=provider, операция=operation, **extra)
+
+    def записать(ok: bool) -> None:
+        """Занести вызов в журнал расхода. Единственная точка на все сервисы.
+
+        Здесь же и сбойные: неудачный вызов тоже занимает время, а у части
+        сервисов и деньги, и в админке он должен быть виден.
+        """
+        usage.note(
+            provider,
+            operation,
+            ok,
+            round((time.monotonic() - started) * 1000),
+            {**extra, **details},
+        )
+
     try:
         yield details
     except ProviderError as exc:
@@ -61,6 +77,7 @@ async def call_logged(provider: str, operation: str, **extra: object):
             "тело_ответа": (exc.body or "")[:1000],
         }
         log.error("внешний сервис ответил ошибкой", **fields)
+        записать(ok=False)
         raise
     except Exception as exc:
         fields = {
@@ -71,6 +88,7 @@ async def call_logged(provider: str, operation: str, **extra: object):
             "ошибка": repr(exc),
         }
         log.exception("вызов внешнего сервиса упал", **fields)
+        записать(ok=False)
         raise
     else:
         log.info(
@@ -80,6 +98,7 @@ async def call_logged(provider: str, operation: str, **extra: object):
             длительность_мс=round((time.monotonic() - started) * 1000),
             **details,
         )
+        записать(ok=True)
 
 
 @dataclass(slots=True)

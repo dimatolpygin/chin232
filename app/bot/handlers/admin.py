@@ -293,7 +293,10 @@ async def on_admin_action(
         return
 
     if action.section == SECTION_SPEND:
-        await _show_spend(callback, session, int(action.value or 7))
+        # Период из нажатия — число, но нажатие могло прийти и не от нашей
+        # клавиатуры: неделя как запасной вариант лучше исключения в хендлере.
+        дней = int(action.value) if action.value.isdigit() else 7
+        await _show_spend(callback, session, дней)
         return
 
     if action.section == SECTION_LIMITS:

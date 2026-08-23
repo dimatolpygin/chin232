@@ -14,6 +14,9 @@ from sqlalchemy.ext.asyncio import (
 
 from app.config import get_settings
 from app.core import usage
+from app.logging import get_logger
+
+log = get_logger("db")
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
@@ -57,12 +60,31 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
         try:
             yield session
             spent = usage.take()
-            await usage.write(session, spent)
+            await _write_spending(session, spent)
+            spent = []
             await session.commit()
         except Exception:
             await session.rollback()
             usage.give_back(spent)
             raise
+
+
+async def _write_spending(session: AsyncSession, spent: list[usage.Call]) -> None:
+    """Дописать журнал расхода, не ставя под удар саму работу.
+
+    Отдельной точкой сохранения: неудачный INSERT в постгресе рушит всю
+    транзакцию целиком, и сбой в диагностическом журнале утащил бы за собой
+    ответ пользователю. Записи при этом выбрасываем, а не возвращаем в буфер:
+    те же строки упадут точно так же, а расход — не деньги юзера, чтобы ради
+    него ломать разговор.
+    """
+    if not spent:
+        return
+    try:
+        async with session.begin_nested():
+            await usage.write(session, spent)
+    except Exception as exc:  # noqa: BLE001  журнал расхода не главнее разговора
+        log.error("журнал расхода не записан", вызовов=len(spent), ошибка=repr(exc))
 
 
 async def dispose_engine() -> None:

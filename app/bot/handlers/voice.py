@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.core.events import track
 from app.core.services.limits import KIND_CHECK, KIND_MESSAGE
 from app.core.services.pronunciation import load_practice, stop_practice
+from app.core.services.turn import finish_round, start_round
 from app.db.models import User
 from app.logging import get_logger
 
@@ -47,6 +48,40 @@ async def on_voice(
 
     await track(session, "voice_received", user_id=user.id, секунд=voice.duration)
 
+    if not await _hold(message, session, user, queue):
+        return
+
+    поставлено = False
+    try:
+        поставлено = await _route_voice(message, session, user, queue, request_id)
+    finally:
+        # Замок снимает воркер, когда круг закончился. Если задача не уехала —
+        # упёрлась в лимит или сорвалась — снимаем прямо здесь, иначе юзер
+        # прождал бы до конца TTL непонятно чего.
+        if not поставлено:
+            await finish_round(queue, str(user.id))
+
+
+async def _hold(message: Message, session: AsyncSession, user: User, queue) -> bool:
+    """Занять круг. False — предыдущая реплика ещё считается, юзеру сказано."""
+    if await start_round(queue, str(user.id)):
+        return True
+    await message.answer(ru.ROUND_IN_PROGRESS)
+    await track(session, "round_busy", user_id=user.id)
+    log.info("реплика отбита замком круга", user_id=str(user.id))
+    return False
+
+
+async def _route_voice(
+    message: Message,
+    session: AsyncSession,
+    user: User,
+    queue,
+    request_id: str,
+) -> bool:
+    """Отправить запись в оценку или в разговор. True — задача уехала в очередь."""
+    voice = message.voice
+
     # Пока включён режим «повторите за мной», запись — это попытка произнести
     # эталон, а не реплика в разговоре. Проверяем до постановки в круг: иначе
     # бот ответит на попытку встречным вопросом, а оценки юзер не увидит вовсе.
@@ -55,7 +90,7 @@ async def on_voice(
         # Разбор произношения списывается со своего счётчика и именно здесь, в
         # момент записи: нажатие кнопки «Оценка» ещё ничего не разбирает.
         if await spend(message, session, user, queue, KIND_CHECK) is None:
-            return
+            return False
         await queue.enqueue_job(
             "process_pronunciation",
             user_id=str(user.id),
@@ -74,12 +109,12 @@ async def on_voice(
             эталон=target.ref_text,
             секунд=voice.duration,
         )
-        return
+        return True
 
     # Списываем до постановки в очередь: за стеной лимита не должно уйти ни
     # одного платного вызова, и проверить это можно прямо по логам воркера.
     if await spend(message, session, user, queue, KIND_MESSAGE) is None:
-        return
+        return False
 
     await queue.enqueue_job(
         "process_voice_round",
@@ -89,6 +124,7 @@ async def on_voice(
         file_id=voice.file_id,
     )
     log.info("голосовое поставлено в очередь", user_id=str(user.id), секунд=voice.duration)
+    return True
 
 
 @router.message(F.text & ~F.text.startswith("/"))
@@ -109,18 +145,28 @@ async def on_text(
         await message.answer(ru.PRACTICE_CANCELLED)
 
     await track(session, "text_received", user_id=user.id, знаков=len(message.text or ""))
-    # Текстовая реплика запускает тот же круг с теми же четырьмя сервисами,
-    # значит и стоит столько же — считаем её тем же счётчиком.
-    if await spend(message, session, user, queue, KIND_MESSAGE) is None:
+
+    if not await _hold(message, session, user, queue):
         return
-    await queue.enqueue_job(
-        "process_voice_round",
-        user_id=str(user.id),
-        chat_id=message.chat.id,
-        request_id=request_id,
-        text=message.text,
-    )
-    log.info("текст поставлен в очередь", user_id=str(user.id))
+
+    поставлено = False
+    try:
+        # Текстовая реплика запускает тот же круг с теми же четырьмя сервисами,
+        # значит и стоит столько же — считаем её тем же счётчиком.
+        if await spend(message, session, user, queue, KIND_MESSAGE) is None:
+            return
+        await queue.enqueue_job(
+            "process_voice_round",
+            user_id=str(user.id),
+            chat_id=message.chat.id,
+            request_id=request_id,
+            text=message.text,
+        )
+        поставлено = True
+        log.info("текст поставлен в очередь", user_id=str(user.id))
+    finally:
+        if not поставлено:
+            await finish_round(queue, str(user.id))
 
 
 @router.message()

@@ -12,6 +12,8 @@ from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
+import httpx
+
 from app.core import usage
 from app.logging import get_logger
 
@@ -79,6 +81,22 @@ async def call_logged(provider: str, operation: str, **extra: object):
         log.error("внешний сервис ответил ошибкой", **fields)
         записать(ok=False)
         raise
+    except httpx.HTTPError as exc:
+        # Сервис не ответил по сети: таймаут, обрыв, недоступный хост. Для круга
+        # это тот же сбой провайдера, что и пятисотка, поэтому заворачиваем —
+        # иначе каждому, кто ловит ProviderError (запасная озвучка, понятное
+        # сообщение юзеру), пришлось бы знать ещё и про httpx. А недоступность
+        # сервиса выглядит именно так, а не как аккуратный http-код.
+        fields = {
+            "провайдер": provider,
+            "операция": operation,
+            "длительность_мс": round((time.monotonic() - started) * 1000),
+            **details,
+            "ошибка": repr(exc),
+        }
+        log.error("внешний сервис не ответил по сети", **fields)
+        записать(ok=False)
+        raise ProviderError(provider, operation, f"сеть: {exc!r}") from exc
     except Exception as exc:
         fields = {
             "провайдер": provider,

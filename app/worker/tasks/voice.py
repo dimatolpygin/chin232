@@ -31,6 +31,7 @@ from app.core.services.dialog import (
 )
 from app.core.services.limits import KIND_MESSAGE, peek, refund
 from app.core.services.recognition import NotRecognized
+from app.core.services.turn import finish_round
 from app.db.models import User
 from app.db.repositories.dialogs import set_audio_file_id
 from app.db.session import session_scope
@@ -181,6 +182,10 @@ async def process_voice_round(
         # Слот списан ботом до постановки в очередь, а круга не случилось.
         await refund_quietly(ctx, user_id, KIND_MESSAGE)
         await _fail(bot, chat_id, exc, "круг")
+    finally:
+        # Замок поставил бот, когда принял реплику. Снимаем в любом исходе:
+        # круг закончился, следующую реплику принимать можно.
+        await finish_round(ctx.get("redis"), user_id)
 
 
 async def greet_user(

@@ -16,6 +16,7 @@ from app.bot.texts import ru
 from app.core.providers.base import ProviderError, SpeechUnclear
 from app.core.services.limits import KIND_CHECK, peek
 from app.core.services.pronunciation import PracticeTarget, assess_attempt, stop_practice
+from app.core.services.turn import finish_round
 from app.db.models import User
 from app.db.session import session_scope
 from app.logging import bind_request, get_logger
@@ -102,6 +103,10 @@ async def process_pronunciation(
         log.exception("оценка произношения оборвалась", ошибка=repr(exc))
         await refund_quietly(ctx, user_id, KIND_CHECK)
         await _say(bot, chat_id, ru.ERROR_GENERIC, dialog_id)
+    finally:
+        # Тот же замок, что и у разговорного круга: запись занимает его при
+        # приёме, оценка освобождает по завершении.
+        await finish_round(queue, user_id)
 
 
 async def _say(bot: Any, chat_id: int, text: str, dialog_id: int) -> None:

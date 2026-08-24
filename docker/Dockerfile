@@ -7,19 +7,23 @@ ENV PYTHONUNBUFFERED=1 \
 
 # ffmpeg нужен для конвертации голосовых (этап 1), ставим сразу — образ не пересобирать.
 #
-# postgresql-client берём из репозитория самого postgres, а не из debian: там
-# лежит версия 15, а сервер у нас 16, и pg_dump отказывается снимать дамп с
-# сервера новее себя. Без него ночная копия базы не соберётся.
+# postgresql-client — ради pg_dump и psql: ими снимается и восстанавливается
+# ночная копия базы. Штатный клиент debian подходит, потому что база у нас 16,
+# а в trixie лежит 17: клиент новее сервера дампит нормально, наоборот —
+# отказывается. Сторонний репозиторий postgres поэтому не нужен.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg curl tini gnupg \
- && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-      | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
- && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
-      > /etc/apt/sources.list.d/pgdg.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends postgresql-client-16 \
- && apt-get purge -y gnupg && apt-get autoremove -y \
+ && apt-get install -y --no-install-recommends ffmpeg curl tini postgresql-client \
  && rm -rf /var/lib/apt/lists/*
+
+# Проверка на месте сборки: если базовый образ однажды съедет на debian с
+# клиентом старше нашего сервера, узнать об этом надо здесь, а не ночью, когда
+# копия молча не соберётся.
+# Имя переменной латиницей намеренно: sh внутри образа кириллических
+# идентификаторов не понимает, как и bash на раннере GitHub Actions.
+RUN set -e; \
+    major="$(pg_dump --version | sed -E 's/.* ([0-9]+).*/\1/')"; \
+    echo "pg_dump мажорной версии $major"; \
+    [ "$major" -ge 16 ] || { echo "pg_dump старше базы (нужен >= 16)"; exit 1; }
 
 WORKDIR /app
 

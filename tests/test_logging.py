@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.logging import mask_secrets
+from app.logging import configure_logging, get_logger, mask_secrets
 
 
 def test_значение_по_ключу_маскируется():
@@ -26,3 +26,27 @@ def test_токен_бота_в_тексте_маскируется():
 def test_обычный_текст_не_трогаем():
     result = mask_secrets(None, "info", {"event": "входящее сообщение от @user"})
     assert result["event"] == "входящее сообщение от @user"
+
+
+def test_секрет_из_трейсбека_маскируется(capsys):
+    """Самый коварный случай: исключение с токеном внутри.
+
+    Поле «ошибка» маскировалось и раньше, а вот traceback рисуется отдельным
+    процессором — и если маскировка стоит выше него, в лог уезжает полный
+    адрес файлового сервера Telegram вместе с токеном бота.
+    """
+    configure_logging("INFO", "json")
+    log = get_logger("тест")
+    try:
+        raise RuntimeError(
+            "Client error '404 Not Found' for url "
+            "'https://api.telegram.org/file/bot123456789:AAsecrettokenvalue/voice/f.oga'"
+        )
+    except RuntimeError as exc:
+        log.exception("круг оборван ошибкой", ошибка=repr(exc))
+
+    вывод = capsys.readouterr().out
+    assert "AAsecrettokenvalue" not in вывод
+    assert "круг оборван ошибкой" in вывод
+    # Трейсбек остаётся на месте: маскируется секрет, а не отладка.
+    assert "Traceback" in вывод

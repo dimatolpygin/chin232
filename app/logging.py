@@ -81,9 +81,15 @@ def configure_logging(level: str = "INFO", fmt: str = "console") -> None:
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="%d.%m.%Y %H:%M:%S", utc=False),
-            mask_secrets,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
+            # Строго ПОСЛЕ отрисовки traceback. Иначе маскировка его не видит:
+            # исключение к этому моменту лежит в event_dict объектом, а строкой
+            # становится ниже — и уходит в лог как есть. Живой случай: файловый
+            # сервер Telegram отвечает 404, httpx кладёт в текст ошибки полный
+            # адрес запроса, а в нём токен бота. Само поле «ошибка» было
+            # замаскировано, а тот же токен в трейсбеке — нет.
+            mask_secrets,
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(

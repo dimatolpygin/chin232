@@ -1,0 +1,26 @@
+# Публичный вход. Наружу торчит только вебхук платёжки и проверка живости,
+# всё остальное отдаёт заглушку: незачем светить API в интернет.
+chinesetonebot.ru {
+	encode gzip
+
+	# Access-лог отдельным файлом: по нему видно, приходила ли платёжка вообще.
+	# Без него неотвеченный вебхук не отличить от неотправленного.
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+
+	handle /webhooks/* {
+		reverse_proxy 127.0.0.1:8090
+	}
+
+	handle /health {
+		reverse_proxy 127.0.0.1:8090
+	}
+
+	handle {
+		respond "china_bot" 200
+	}
+}

@@ -23,7 +23,7 @@ from pathlib import Path
 from sqlalchemy.engine import make_url
 
 from app.config import get_settings
-from app.core.services.backup import fetch_backup, list_backups, run_backup
+from app.core.services.backup import fetch_backup, list_backups, run_backup, verify_restore
 from app.logging import configure_logging, get_logger
 
 log = get_logger("backup")
@@ -46,6 +46,16 @@ async def снять() -> int:
     print(f"Готово: {итог.name}, {итог.size / 1024 / 1024:.2f} МБ, за {итог.seconds} с")
     if итог.deleted:
         print("Убрано старых: " + ", ".join(итог.deleted))
+    return 0
+
+
+async def проверить() -> int:
+    """Убедиться, что свежая копия действительно накатывается."""
+    итог = await verify_restore()
+    print(
+        f"Копия {итог.name} восстанавливается: таблиц {итог.tables}, "
+        f"юзеров {итог.rows}, за {итог.seconds} с"
+    )
     return 0
 
 
@@ -111,6 +121,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="команда", required=True)
     sub.add_parser("список", help="что лежит в хранилище")
     sub.add_parser("снять", help="сделать копию прямо сейчас")
+    sub.add_parser("проверить", help="накатить свежую копию в отдельную базу и проверить")
 
     p_get = sub.add_parser("скачать", help="сохранить копию в файл")
     p_get.add_argument("имя")
@@ -125,6 +136,8 @@ def main() -> int:
         return asyncio.run(показать())
     if args.команда == "снять":
         return asyncio.run(снять())
+    if args.команда == "проверить":
+        return asyncio.run(проверить())
     if args.команда == "скачать":
         return asyncio.run(скачать(args.имя, args.куда))
     return asyncio.run(восстановить(args.имя, args.да))

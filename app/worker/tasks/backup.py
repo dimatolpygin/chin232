@@ -15,7 +15,7 @@ from typing import Any
 from app.bot.texts import ru
 from app.config import get_settings
 from app.core.events import track
-from app.core.services.backup import run_backup
+from app.core.services.backup import run_backup, verify_restore
 from app.db.session import session_scope
 from app.logging import get_logger
 from app.worker.notify import notify_admins
@@ -64,3 +64,38 @@ async def backup_database(ctx: dict[str, Any]) -> None:
         мегабайт=round(итог.size / 1024 / 1024, 2),
         всего_копий=итог.kept,
     )
+
+
+async def verify_backup(ctx: dict[str, Any]) -> None:
+    """Раз в неделю: правда ли последняя копия восстанавливается.
+
+    Смысл не в копии, а в возможности из неё подняться. Проверить это можно
+    единственным способом — действительно накатить дамп; всё остальное будет
+    рассуждением о файле, который никто не открывал.
+    """
+    settings = get_settings()
+    bot = ctx.get("bot")
+
+    if not settings.s3_endpoint or not settings.s3_bucket:
+        return
+
+    try:
+        итог = await verify_restore(settings)
+    except Exception as exc:  # noqa: BLE001  падение задачи не должно ронять воркер
+        log.exception("копия не восстанавливается", ошибка=repr(exc))
+        async with session_scope() as session:
+            await track(session, "backup_verify_failed", ошибка=repr(exc)[:500])
+        if bot is not None:
+            await notify_admins(bot, ru.BACKUP_VERIFY_FAILED.format(error=str(exc)[:300]))
+        return
+
+    async with session_scope() as session:
+        await track(
+            session,
+            "backup_verified",
+            файл=итог.name,
+            таблиц=итог.tables,
+            юзеров=итог.rows,
+            секунд=итог.seconds,
+        )
+    log.info("копия проверена восстановлением", файл=итог.name, таблиц=итог.tables)

@@ -261,6 +261,124 @@ async def prune(storage: S3Storage, settings: Settings, today: date) -> list[str
     return удалено
 
 
+# Временная база, в которую копия накатывается на проверку. Имя фиксированное
+# и с суффиксом: удалять базу по имени из настройки — слишком хороший способ
+# однажды снести боевую.
+VERIFY_DB = "china_bot_verify"
+
+
+@dataclass(slots=True)
+class VerifyResult:
+    """Чем кончилась проверка восстановления."""
+
+    name: str
+    tables: int
+    rows: int
+    seconds: float
+
+
+async def _psql(
+    settings: Settings, database: str, sql: str | None = None, dump: bytes | None = None
+) -> tuple[int, str, str]:
+    """Позвать psql. Либо командой, либо потоком дампа на вход."""
+    url = make_url(settings.database_url)
+    args = [
+        "psql",
+        "-h",
+        url.host or "postgres",
+        "-p",
+        str(url.port or 5432),
+        "-U",
+        url.username or "china_bot",
+        "-d",
+        database,
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-q",
+        "-t",
+        "-A",
+    ]
+    if sql is not None:
+        args += ["-c", sql]
+
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdin=asyncio.subprocess.PIPE if dump is not None else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "PGPASSWORD": url.password or ""},
+    )
+    out, err = await process.communicate(input=dump)
+    return (
+        process.returncode or 0,
+        out.decode("utf-8", "replace").strip(),
+        err.decode("utf-8", "replace").strip(),
+    )
+
+
+async def verify_restore(settings: Settings | None = None) -> VerifyResult:
+    """Накатить свежую копию в отдельную базу и убедиться, что она живая.
+
+    Копия, которую ни разу не пробовали восстановить, — это не копия, а
+    надежда. Проверка ловит то, что при снятии дампа не видно вообще: на
+    живом прогоне так нашлось, что pg_dump 17 пишет заголовок, которого не
+    понимает сервер 16, — файл снимался исправно и не накатывался никуда.
+
+    Боевая база не участвует: всё происходит во временной, и она удаляется в
+    любом исходе.
+    """
+    settings = settings or get_settings()
+    боевая = make_url(settings.database_url).database
+    if боевая == VERIFY_DB:
+        raise BackupError("имя проверочной базы совпало с боевой — проверка отменена")
+
+    копии = await list_backups(settings=settings)
+    if not копии:
+        raise BackupError("в хранилище нет ни одной копии")
+    последняя = копии[-1]
+
+    started = time.monotonic()
+    архив = await fetch_backup(последняя.name, settings)
+    дамп = gzip.decompress(архив)
+
+    try:
+        # Служебная база postgres есть всегда: из неё и командуем.
+        await _psql(settings, "postgres", sql=f'DROP DATABASE IF EXISTS "{VERIFY_DB}"')
+        код, _, err = await _psql(settings, "postgres", sql=f'CREATE DATABASE "{VERIFY_DB}"')
+        if код != 0:
+            raise BackupError(f"проверочную базу не создать: {err[-300:]}")
+
+        код, _, err = await _psql(settings, VERIFY_DB, dump=дамп)
+        if код != 0:
+            raise BackupError(f"копия не накатывается: {err[-300:]}")
+
+        _, таблиц, _ = await _psql(
+            settings,
+            VERIFY_DB,
+            sql="SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'",
+        )
+        _, юзеров, _ = await _psql(settings, VERIFY_DB, sql="SELECT count(*) FROM users")
+        if not таблиц.isdigit() or int(таблиц) == 0:
+            raise BackupError("копия накатилась, но таблиц в ней нет")
+    finally:
+        await _psql(settings, "postgres", sql=f'DROP DATABASE IF EXISTS "{VERIFY_DB}"')
+
+    итог = VerifyResult(
+        name=последняя.name,
+        tables=int(таблиц),
+        rows=int(юзеров) if юзеров.isdigit() else 0,
+        seconds=round(time.monotonic() - started, 2),
+    )
+    log.info(
+        "копия восстанавливается",
+        файл=итог.name,
+        таблиц=итог.tables,
+        юзеров=итог.rows,
+        длительность_сек=итог.seconds,
+    )
+    return итог
+
+
 @dataclass(slots=True, frozen=True)
 class BackupStatus:
     """Что показать админу про копии: есть ли они и насколько свежие."""

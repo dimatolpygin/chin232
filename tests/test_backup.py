@@ -12,16 +12,20 @@ from datetime import date, datetime
 
 import httpx
 import pytest
+from sqlalchemy.engine import make_url
 
 from app.config import Settings
 from app.core.providers.base import ProviderError
 from app.core.providers.storage.s3 import S3Storage, StoredObject
 from app.core.services.backup import (
+    VERIFY_DB,
+    BackupError,
     BackupStatus,
     backup_name,
     keep_plan,
     parse_day,
     prune,
+    verify_restore,
 )
 
 BASE = {
@@ -281,3 +285,22 @@ def test_старая_копия_протухла(monkeypatch):
 
 def test_пустое_хранилище_это_тоже_тревога():
     assert BackupStatus(configured=True, last=None, count=0).stale is True
+
+
+# --- проверка восстановления ---------------------------------------------------
+
+
+def test_проверочная_база_не_совпадает_с_боевой():
+    # Самое опасное место во всём бэкапе: проверка восстановления удаляет свою
+    # базу. Совпади имя с боевой — и «проверка копии» стала бы её потерей.
+    боевая = make_url(BASE["database_url"]).database
+    assert боевая != VERIFY_DB
+    assert VERIFY_DB.endswith("_verify")
+
+
+async def test_проверка_отказывается_работать_с_боевой_базой():
+    # Даже если однажды базу назовут china_bot_verify, проверка обязана
+    # остановиться, а не снести её.
+    settings = _settings(database_url=f"postgresql+asyncpg://u:p@postgres/{VERIFY_DB}")
+    with pytest.raises(BackupError):
+        await verify_restore(settings)

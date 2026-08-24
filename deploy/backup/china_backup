@@ -1,0 +1,2 @@
+# Дамп базы china_bot каждую ночь в 03:30
+30 3 * * * root /opt/backup/pg_dump.sh >/dev/null 2>&1

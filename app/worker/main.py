@@ -27,6 +27,7 @@ from app.worker.tasks import (
     remind_expiring,
     run_broadcast,
     send_limit_reminders,
+    verify_backup,
     watch_load,
 )
 
@@ -104,6 +105,7 @@ class WorkerSettings:
         # две минуты ему может не хватить уже на сотне мегабайт. Повторов нет:
         # неудачная копия — повод разбудить человека, а не молча долбиться.
         func(backup_database, timeout=900, max_tries=1),
+        func(verify_backup, timeout=900, max_tries=1),
     ]
     # Каждые четыре минуты: раньше, чем сервер успеет закрыть простаивающее
     # соединение по своему таймауту.
@@ -126,6 +128,10 @@ class WorkerSettings:
         # Сторож нагрузки. Ежечасно и не в круглый час: в круглый уже стоят
         # другие задачи, а на одном ядре толпиться им незачем.
         cron(watch_load, minute={40}, run_at_startup=False),
+        # Проверка копии восстановлением: по воскресеньям, через час после
+        # ночного дампа. Копия, из которой ни разу не поднимались, — это
+        # надежда, а не копия.
+        cron(verify_backup, weekday={6}, hour={1}, minute={30}, run_at_startup=False),
     ]
     on_startup = on_startup
     on_shutdown = on_shutdown

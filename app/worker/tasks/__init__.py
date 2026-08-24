@@ -1,4 +1,4 @@
-from app.worker.tasks.backup import backup_database
+from app.worker.tasks.backup import backup_database, verify_backup
 from app.worker.tasks.billing import expire_subscriptions, notify_payment, remind_expiring
 from app.worker.tasks.broadcast import run_broadcast
 from app.worker.tasks.load import watch_load
@@ -17,5 +17,6 @@ __all__ = [
     "run_broadcast",
     "remind_expiring",
     "send_limit_reminders",
+    "verify_backup",
     "watch_load",
 ]

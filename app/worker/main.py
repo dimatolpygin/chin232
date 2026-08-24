@@ -17,6 +17,7 @@ from app.core.providers.http import close_client, warmup
 from app.db.session import dispose_engine
 from app.logging import clear_request, configure_logging, get_logger
 from app.worker.tasks import (
+    backup_database,
     expire_subscriptions,
     greet_user,
     notify_payment,
@@ -26,6 +27,7 @@ from app.worker.tasks import (
     remind_expiring,
     run_broadcast,
     send_limit_reminders,
+    watch_load,
 )
 
 settings = get_settings()
@@ -97,6 +99,11 @@ class WorkerSettings:
         # адресатов. Свой таймаут — час, повторов нет: половина разосланного
         # дважды хуже недоставленного.
         func(run_broadcast, timeout=3600, max_tries=1),
+        watch_load,
+        # Дамп базы упирается в диск и в сеть до хранилища, а общего таймаута в
+        # две минуты ему может не хватить уже на сотне мегабайт. Повторов нет:
+        # неудачная копия — повод разбудить человека, а не молча долбиться.
+        func(backup_database, timeout=900, max_tries=1),
     ]
     # Каждые четыре минуты: раньше, чем сервер успеет закрыть простаивающее
     # соединение по своему таймауту.
@@ -113,6 +120,12 @@ class WorkerSettings:
         # не будить человека ночью, а тем, у кого часовой пояс далёкий, лучше
         # получить его днём накануне, чем ночью в день окончания.
         cron(remind_expiring, hour={9}, minute={30}, run_at_startup=False),
+        # Копия базы в хранилище. 00:30 UTC — это 03:30 по Москве: время, когда
+        # разговоров нет и дамп никому не мешает.
+        cron(backup_database, hour={0}, minute={30}, run_at_startup=False),
+        # Сторож нагрузки. Ежечасно и не в круглый час: в круглый уже стоят
+        # другие задачи, а на одном ядре толпиться им незачем.
+        cron(watch_load, minute={40}, run_at_startup=False),
     ]
     on_startup = on_startup
     on_shutdown = on_shutdown

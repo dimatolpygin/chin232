@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from aiogram import F, Router
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,6 +100,7 @@ async def _route_voice(
             request_id=request_id,
             file_id=voice.file_id,
             dialog_id=target.dialog_id,
+            queued_at=time.time(),
             ref_text=target.ref_text,
             pinyin=target.pinyin,
             from_correction=target.from_correction,
@@ -122,6 +125,10 @@ async def _route_voice(
         chat_id=message.chat.id,
         request_id=request_id,
         file_id=voice.file_id,
+        # Момент постановки в очередь. Из него воркер считает, сколько реплика
+        # пролежала до начала работы, — это и есть первый признак того, что
+        # машина перестаёт справляться.
+        queued_at=time.time(),
     )
     log.info("голосовое поставлено в очередь", user_id=str(user.id), секунд=voice.duration)
     return True
@@ -161,6 +168,7 @@ async def on_text(
             chat_id=message.chat.id,
             request_id=request_id,
             text=message.text,
+            queued_at=time.time(),
         )
         поставлено = True
         log.info("текст поставлен в очередь", user_id=str(user.id))

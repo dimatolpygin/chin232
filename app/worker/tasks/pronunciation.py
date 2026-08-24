@@ -13,6 +13,8 @@ from typing import Any
 from app.bot.keyboards.answer import result_keyboard
 from app.bot.render import render_left, render_result
 from app.bot.texts import ru
+from app.core.audio import ffmpeg_time_ms, reset_ffmpeg_time
+from app.core.events import track
 from app.core.providers.base import ProviderError, SpeechUnclear
 from app.core.services.limits import KIND_CHECK, peek
 from app.core.services.pronunciation import PracticeTarget, assess_attempt, stop_practice
@@ -36,6 +38,7 @@ async def process_pronunciation(
     from_correction: bool = False,
     audio_file_id: str | None = None,
     request_id: str | None = None,
+    queued_at: float | None = None,
 ) -> None:
     """Оценить запись юзера по эталону и показать разбор по иероглифам.
 
@@ -47,6 +50,8 @@ async def process_pronunciation(
     bot = ctx["bot"]
     queue = ctx.get("redis")
     started = time.monotonic()
+    reset_ffmpeg_time()
+    ожидание = round(max(time.time() - queued_at, 0.0), 2) if queued_at else 0.0
     target = PracticeTarget(
         dialog_id=dialog_id,
         ref_text=ref_text,
@@ -74,12 +79,28 @@ async def process_pronunciation(
             if queue is not None:
                 quota = await peek(queue, session, user, KIND_CHECK)
                 текст = f"{текст}\n\n{render_left(quota)}"
+            # Оценка тоже гоняет ffmpeg и тоже заставляет человека ждать,
+            # поэтому в метрику нагрузки она идёт наравне с разговором — иначе
+            # вечер, забитый разборами произношения, выглядел бы пустым.
+            круг = round(time.monotonic() - started, 2)
+            await track(
+                session,
+                "round_timing",
+                user_id=user.id,
+                вид="оценка",
+                ожидание_сек=ожидание,
+                круг_сек=круг,
+                всего_сек=round(ожидание + круг, 2),
+                ffmpeg_мс=ffmpeg_time_ms(),
+            )
         await bot.send_message(chat_id, текст, reply_markup=result_keyboard(dialog_id))
         log.info(
             "оценка отправлена юзеру",
             chat_id=chat_id,
             балл=result.overall,
-            длительность_сек=round(time.monotonic() - started, 2),
+            длительность_сек=круг,
+            ожидание_сек=ожидание,
+            ffmpeg_мс=ffmpeg_time_ms(),
         )
     except SpeechUnclear as exc:
         # Не авария: сервис услышал шум или тишину. Режим остаётся включённым,

@@ -12,7 +12,9 @@ from datetime import date
 
 from app.bot.texts import ru
 from app.core.providers.pronunciation.speechsuper import LOW_INTEGRITY
+from app.core.services.backup import BackupStatus
 from app.core.services.limits import KIND_CHECK, Limits, Quota
+from app.core.services.load import BUDGET_SEC, Load
 from app.core.services.progress import Progress
 from app.core.services.pronunciation import AssessResult, CharResult, PracticeTarget
 from app.core.services.stats import Spend, Summary
@@ -306,3 +308,76 @@ def render_spending(spending: list[Spend], days: int) -> str:
 
     итог = ru.ADMIN_SPEND_TOTAL.format(cost=money(sum(s.cost for s in spending)))
     return "\n\n".join([заголовок, "\n".join(строки), итог, ru.ADMIN_SPEND_NOTE])
+
+
+def human_size(byte_count: int) -> str:
+    """Размер файла словами: мегабайты, а не восьмизначное число байт."""
+    if byte_count >= 1024 * 1024:
+        return f"{byte_count / 1024 / 1024:.1f} МБ"
+    if byte_count >= 1024:
+        return f"{byte_count / 1024:.0f} КБ"
+    return f"{byte_count} Б"
+
+
+def render_backup(status: BackupStatus) -> str:
+    """Строка про копии базы: есть ли свежая и сколько их всего."""
+    if not status.configured:
+        return ru.ADMIN_BACKUP_OFF
+    if status.error:
+        return ru.ADMIN_BACKUP_FAIL.format(error=esc(status.error))
+    if status.last is None:
+        return ru.ADMIN_BACKUP_NONE
+    строка = ru.ADMIN_BACKUP_OK.format(
+        name=esc(status.last.name),
+        size=human_size(status.last.size),
+        count=status.count,
+    )
+    # Устаревшая копия хуже отсутствующей: на неё рассчитывают.
+    return строка + (ru.ADMIN_BACKUP_STALE if status.stale else "")
+
+
+def render_load(load: Load, backup: BackupStatus | None = None) -> str:
+    """Экран нагрузки. Сначала приговор словами, потом цифры под ним.
+
+    Порядок именно такой: вопрос у владельца один — «пора ли платить за
+    сервер побольше», и ответ на него не должен собираться из семи чисел.
+    """
+    заголовок = ru.ADMIN_LOAD.format(period=ru.LOAD_PERIODS.get(load.hours, f"за {load.hours} ч"))
+    блоки = [
+        заголовок,
+        ru.ADMIN_LOAD_VERDICT.format(
+            verdict=load.verdict,
+            advice=ru.ADMIN_LOAD_ADVICE.get(load.verdict, ""),
+        ),
+    ]
+
+    if not load.rounds:
+        блоки.append(ru.ADMIN_LOAD_EMPTY)
+    else:
+        блоки.append(
+            ru.ADMIN_LOAD_ROUNDS.format(
+                rounds=load.rounds,
+                budget=f"{BUDGET_SEC:.0f}",
+                slow=load.slow,
+                total_median=load.total_median,
+                total_p95=load.total_p95,
+                wait_median=load.wait_median,
+                wait_p95=load.wait_p95,
+                busiest=load.busiest_minute,
+            )
+        )
+
+    нагрузка = load.load_per_core
+    блоки.append(
+        ru.ADMIN_LOAD_MACHINE.format(
+            cores=load.cores,
+            load=ru.ADMIN_LOAD_NO_LA if нагрузка is None else нагрузка,
+            queue=load.queue_depth,
+            ffmpeg=round(load.ffmpeg_ms),
+        )
+    )
+    if load.refused:
+        блоки.append(ru.ADMIN_LOAD_REFUSED.format(refused=load.refused))
+    if backup is not None:
+        блоки.append(render_backup(backup))
+    return "\n\n".join(блоки)

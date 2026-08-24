@@ -31,6 +31,7 @@ SECTION_KNOB = "lim"
 SECTION_PRICE = "price"
 SECTION_PLAN = "pr"
 SECTION_SPEND = "spend"
+SECTION_LOAD = "load"
 SECTION_BROADCAST = "cast"
 SECTION_ADMINS = "who"
 SECTION_SEND = "send"
@@ -41,6 +42,10 @@ SECTION_NOOP = "noop"
 # Периоды расхода. Сутки — «что происходит прямо сейчас», месяц — «во что это
 # обходится».
 SPEND_DAYS = (1, 7, 30)
+
+# Периоды нагрузки в часах: час — «что происходит прямо сейчас», сутки —
+# рабочая величина, неделя — чтобы увидеть рост, а не всплеск.
+LOAD_HOURS = (1, 24, 168)
 
 
 @dataclass(slots=True, frozen=True)
@@ -92,6 +97,7 @@ def admin_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=ru.BTN_ADMIN_BROADCAST, callback_data=_cb(SECTION_BROADCAST)),
             InlineKeyboardButton(text=ru.BTN_ADMIN_ADMINS, callback_data=_cb(SECTION_ADMINS)),
         ],
+        [InlineKeyboardButton(text=ru.BTN_ADMIN_LOAD, callback_data=_cb(SECTION_LOAD, 24))],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -176,6 +182,17 @@ def spend_keyboard(days: int) -> InlineKeyboardMarkup:
             callback_data=_cb(SECTION_SPEND, d),
         )
         for d in SPEND_DAYS
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[row, _back(SECTION_MENU)])
+
+
+def load_keyboard(hours: int) -> InlineKeyboardMarkup:
+    row = [
+        InlineKeyboardButton(
+            text=("✅ " if h == hours else "") + ru.LOAD_PERIODS[h],
+            callback_data=_cb(SECTION_LOAD, h),
+        )
+        for h in LOAD_HOURS
     ]
     return InlineKeyboardMarkup(inline_keyboard=[row, _back(SECTION_MENU)])
 

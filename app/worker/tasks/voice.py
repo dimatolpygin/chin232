@@ -18,6 +18,8 @@ from app.bot.keyboards.answer import answer_keyboard
 from app.bot.render import esc, render_left
 from app.bot.texts import ru
 from app.config import get_settings
+from app.core.audio import ffmpeg_time_ms, reset_ffmpeg_time
+from app.core.events import track
 from app.core.providers.base import ProviderError
 from app.core.providers.http import get_client
 from app.core.providers.registry import tts_voices
@@ -136,11 +138,17 @@ async def process_voice_round(
     request_id: str | None = None,
     file_id: str | None = None,
     text: str | None = None,
+    queued_at: float | None = None,
 ) -> None:
     """Круг по голосовому или тексту пользователя."""
     bind_request(request_id, user_id=user_id, job=ctx.get("job_id"))
     bot = ctx["bot"]
     started = time.monotonic()
+    reset_ffmpeg_time()
+    # Сколько реплика пролежала в очереди до начала работы. Пока воркер
+    # справляется, это доли секунды; растёт оно раньше и заметнее всего
+    # остального, поэтому именно по нему и видно приближение потолка.
+    ожидание = round(max(time.time() - queued_at, 0.0), 2) if queued_at else 0.0
 
     try:
         audio: bytes | None = None
@@ -177,7 +185,14 @@ async def process_voice_round(
             voice_file_id = await _send_answer(bot, chat_id, answer, render_left(quota))
             if voice_file_id:
                 await set_audio_file_id(session, answer.dialog_id, voice_file_id)
-        log.info("круг отправлен юзеру", длительность_сек=answer.elapsed_sec, chat_id=chat_id)
+            await _note_timing(session, user, ожидание, answer.elapsed_sec)
+        log.info(
+            "круг отправлен юзеру",
+            длительность_сек=answer.elapsed_sec,
+            ожидание_сек=ожидание,
+            ffmpeg_мс=ffmpeg_time_ms(),
+            chat_id=chat_id,
+        )
     except Exception as exc:  # noqa: BLE001  падение круга не должно ронять воркер
         # Слот списан ботом до постановки в очередь, а круга не случилось.
         await refund_quietly(ctx, user_id, KIND_MESSAGE)
@@ -186,6 +201,24 @@ async def process_voice_round(
         # Замок поставил бот, когда принял реплику. Снимаем в любом исходе:
         # круг закончился, следующую реплику принимать можно.
         await finish_round(ctx.get("redis"), user_id)
+
+
+async def _note_timing(session, user: User, ожидание: float, круг: float) -> None:
+    """Записать, из чего сложилось ожидание пользователя.
+
+    Событие отдельное от `voice_round_done`: то — про разговор, это — про
+    машину. По нему считается загрузка сервера, и в него смотрят, когда решают
+    вопрос «пора ли добавлять ядра».
+    """
+    await track(
+        session,
+        "round_timing",
+        user_id=user.id,
+        ожидание_сек=ожидание,
+        круг_сек=круг,
+        всего_сек=round(ожидание + круг, 2),
+        ffmpeg_мс=ffmpeg_time_ms(),
+    )
 
 
 async def greet_user(

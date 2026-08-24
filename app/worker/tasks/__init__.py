@@ -1,10 +1,13 @@
+from app.worker.tasks.backup import backup_database
 from app.worker.tasks.billing import expire_subscriptions, notify_payment, remind_expiring
 from app.worker.tasks.broadcast import run_broadcast
+from app.worker.tasks.load import watch_load
 from app.worker.tasks.pronunciation import process_pronunciation
 from app.worker.tasks.reminders import send_limit_reminders
 from app.worker.tasks.voice import greet_user, preview_voice, process_voice_round
 
 __all__ = [
+    "backup_database",
     "expire_subscriptions",
     "greet_user",
     "notify_payment",
@@ -14,4 +17,5 @@ __all__ = [
     "run_broadcast",
     "remind_expiring",
     "send_limit_reminders",
+    "watch_load",
 ]

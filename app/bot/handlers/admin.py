@@ -21,6 +21,7 @@ from app.bot.keyboards.admin import (
     SECTION_CANCEL,
     SECTION_KNOB,
     SECTION_LIMITS,
+    SECTION_LOAD,
     SECTION_NOOP,
     SECTION_PLAN,
     SECTION_PRICE,
@@ -32,13 +33,21 @@ from app.bot.keyboards.admin import (
     confirm_keyboard,
     knob_keyboard,
     limits_keyboard,
+    load_keyboard,
     parse_admin_action,
     plan_keyboard,
     price_keyboard,
     segments_keyboard,
     spend_keyboard,
 )
-from app.bot.render import plural, render_limits, render_price, render_spending, render_stats
+from app.bot.render import (
+    plural,
+    render_limits,
+    render_load,
+    render_price,
+    render_spending,
+    render_stats,
+)
 from app.bot.texts import ru
 from app.core.events import track
 from app.core.services.admin import (
@@ -57,7 +66,9 @@ from app.core.services.admin import (
     remove_admin,
     resolve_telegram_id,
 )
+from app.core.services.backup import backup_status
 from app.core.services.limits import get_limits
+from app.core.services.load import load_report
 from app.core.services.stats import load_spending, load_summary
 from app.db.models import User
 from app.logging import get_logger
@@ -261,6 +272,17 @@ async def _show_spend(callback: CallbackQuery, session: AsyncSession, days: int)
     await _redraw(callback, render_spending(spending, days), spend_keyboard(days))
 
 
+async def _show_load(callback: CallbackQuery, session: AsyncSession, queue, hours: int) -> None:
+    """Экран нагрузки: справляется ли сервер и целы ли копии базы.
+
+    Состояние копий тянется вместе с нагрузкой одним экраном намеренно: оба
+    вопроса про сервер, и оба вспоминают в один и тот же момент — когда решают
+    его менять.
+    """
+    load = await load_report(session, hours=hours, queue=queue)
+    await _redraw(callback, render_load(load, await backup_status()), load_keyboard(hours))
+
+
 async def _show_segments(callback: CallbackQuery, session: AsyncSession) -> None:
     sizes = {code: await audience_size(session, code) for code in SEGMENT_TITLES}
     await _redraw(callback, ru.ADMIN_BROADCAST, segments_keyboard(sizes))
@@ -297,6 +319,11 @@ async def on_admin_action(
         # клавиатуры: неделя как запасной вариант лучше исключения в хендлере.
         дней = int(action.value) if action.value.isdigit() else 7
         await _show_spend(callback, session, дней)
+        return
+
+    if action.section == SECTION_LOAD:
+        часов = int(action.value) if action.value.isdigit() else 24
+        await _show_load(callback, session, queue, часов)
         return
 
     if action.section == SECTION_LIMITS:

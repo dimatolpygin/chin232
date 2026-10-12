@@ -301,6 +301,14 @@ def test_отчёт_показывает_деньги_и_долю():
     assert "?start=ref_laoshi" in текст
 
 
+def test_пустой_отчёт_пишет_ноль_с_валютой():
+    """На проверке в боте «Оплат: 0 на 0» читалось как опечатка."""
+    текст = render_partner_report(
+        Report(partner=партнёр(), period=PERIOD_ALL, users=0, paid_users=0, payments=0)
+    )
+    assert "<b>0</b> на <b>0 RUB</b>" in текст
+
+
 def test_список_партнёров_с_ссылками_и_экранированием():
     p = партнёр(active=False)
     p.name = "<b>Иван</b>"

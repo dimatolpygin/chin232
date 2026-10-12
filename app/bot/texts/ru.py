@@ -666,7 +666,7 @@ ADMIN_PARTNER_REPORT = (
     "Причитается партнёру: <b>{due}</b>\n\n"
     "Ссылка: <code>{link}</code>"
 )
-ADMIN_PARTNER_NONE = "0"
+ADMIN_PARTNER_NONE = "0 RUB"
 PARTNER_PERIODS = {"all": "всё время", "month": "этот месяц", "prev": "прошлый месяц"}
 
 ADMIN_PARTNER_USAGE = (

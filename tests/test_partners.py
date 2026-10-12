@@ -12,6 +12,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.bot.handlers.subscription import link_text
 from app.bot.keyboards.admin import (
     SECTION_PARTNER,
     parse_admin_action,
@@ -27,13 +28,16 @@ from app.core.services.partners import (
     PERIOD_PREV,
     PartnerError,
     Report,
+    apply_promo,
     attach_by_start,
     code_from_start,
+    normalize_promo,
     period_bounds,
     save_partner,
+    save_promo,
     set_active,
 )
-from app.db.models import Partner, Payment, User
+from app.db.models import Partner, Payment, PromoCode, User
 from tests.test_billing import (
     FakeBillingSession,
     FakeInvoiceProvider,
@@ -322,3 +326,205 @@ def test_список_партнёров_с_ссылками_и_экраниро
 def test_модель_юзера_и_платежа_знают_партнёра():
     assert "partner_id" in User.__table__.c
     assert "partner_id" in Payment.__table__.c
+
+
+# --- промокоды ---------------------------------------------------------------------
+
+
+class FakePromoSession(FakeSession):
+    """Партнёры и промокоды в памяти."""
+
+    def __init__(self, *партнёры: Partner, промокоды: tuple = ()) -> None:
+        super().__init__(*партнёры)
+        self.промокоды = {p.code: p for p in промокоды}
+
+    async def scalar(self, statement):
+        значение = next(iter(statement.compile().params.values()), None)
+        if "promo_codes" in str(statement):
+            return self.промокоды.get(значение)
+        return self.партнёры.get(значение)
+
+    async def get(self, model, key):
+        return next((p for p in self.партнёры.values() if p.id == key), None)
+
+    def add(self, obj) -> None:
+        super().add(obj)
+        if isinstance(obj, PromoCode):
+            self.промокоды[obj.code] = obj
+
+
+def промо(code: str = "KITAYAN", partner: Partner | None = None, active: bool = True):
+    return PromoCode(code=code, partner_id=partner.id if partner else None, active=active)
+
+
+def test_промокод_нормализуется_как_в_платёжке():
+    assert normalize_promo(" kitayan ") == "KITAYAN"
+    assert normalize_promo("kit ayan") == "KITAYAN"
+    assert normalize_promo("ki") is None
+    assert normalize_promo("китаян") is None
+
+
+@pytest.mark.asyncio
+async def test_промокод_запоминается_и_закрепляет_юзера_без_партнёра():
+    p = партнёр()
+    session = FakePromoSession(p, промокоды=(промо(partner=p),))
+    user = _user()
+
+    applied = await apply_promo(session, user, "kitayan")
+
+    assert applied.ok and applied.code == "KITAYAN"
+    assert user.promo_code == "KITAYAN"
+    assert user.partner_id == p.id
+    assert applied.attached is p
+
+
+@pytest.mark.asyncio
+async def test_промокод_не_перезакрепляет_чужого_юзера():
+    p = партнёр()
+    session = FakePromoSession(p, промокоды=(промо(partner=p),))
+    user = _user()
+    свой = uuid.uuid4()
+    user.partner_id = свой
+
+    applied = await apply_promo(session, user, "KITAYAN")
+
+    assert applied.ok and user.promo_code == "KITAYAN"
+    assert user.partner_id == свой
+    assert applied.attached is None
+
+
+@pytest.mark.asyncio
+async def test_неизвестный_и_отключённый_промокод_не_принимается():
+    session = FakePromoSession(промокоды=(промо("OLD", active=False),))
+    user = _user()
+    assert (await apply_promo(session, user, "NOPE")).ok is False
+    assert (await apply_promo(session, user, "old")).ok is False
+    assert user.promo_code is None
+    assert "promo_rejected" in session.events
+
+
+@pytest.mark.asyncio
+async def test_промокод_заводится_с_партнёром_и_без():
+    p = партнёр()
+    session = FakePromoSession(p)
+    promo, partner, заведён = await save_promo(session, "kitayan", "laoshi")
+    assert (promo.code, promo.partner_id, partner, заведён) == ("KITAYAN", p.id, p, True)
+
+    promo, partner, заведён = await save_promo(session, "KITAYAN", None)
+    assert promo.partner_id is None and partner is None and заведён is False
+
+    with pytest.raises(PartnerError, match="partner"):
+        await save_promo(session, "KITAYAN", "nobody")
+    with pytest.raises(PartnerError, match="promo"):
+        await save_promo(session, "к", None)
+
+
+@pytest.mark.asyncio
+async def test_счёт_несёт_промокод_и_цена_не_пугает_лог():
+    """С кодом сумма у платёжки меньше цены тарифа — это скидка, а не расхождение."""
+    provider = FakeInvoiceProvider()
+    plan = _plan()
+    user = _user()
+    user.email = "client@example.com"
+    user.promo_code = "KITAYAN"
+    session = FakeBillingSession(plan=plan, user_id=user.id)
+
+    import app.core.services.billing as mod
+
+    было = mod.get_payments
+    mod.get_payments = lambda: provider
+    try:
+        started = await billing.start_payment(session, user, plan)
+    finally:
+        mod.get_payments = было
+
+    assert provider.kwargs["promoCode"] == "KITAYAN"
+    assert started.promo_code == "KITAYAN"
+    платёж = next(o for o in session.added if isinstance(o, Payment))
+    assert платёж.promo_code == "KITAYAN"
+
+
+@pytest.mark.asyncio
+async def test_без_промокода_поле_в_счёт_не_уходит():
+    provider = FakeInvoiceProvider()
+    plan = _plan()
+    user = _user()
+    user.email = "client@example.com"
+    session = FakeBillingSession(plan=plan, user_id=user.id)
+
+    import app.core.services.billing as mod
+
+    было = mod.get_payments
+    mod.get_payments = lambda: provider
+    try:
+        await billing.start_payment(session, user, plan)
+    finally:
+        mod.get_payments = было
+    # Провайдер выкидывает None из тела, поэтому старые счета не меняются.
+    assert provider.kwargs.get("promoCode") is None
+
+
+def test_текст_ссылки_со_скидкой_и_без():
+    plan = _plan()  # 590 ₽
+    обычный = billing.Started(payment_url="u", external_id="e", plan=plan)
+    assert "590" in link_text(обычный, plan, "")
+
+    скидка = billing.Started(
+        payment_url="u", external_id="e", plan=plan, amount=Decimal("472"), promo_code="KITAYAN"
+    )
+    assert "472" in link_text(скидка, plan, "") and "KITAYAN" in link_text(скидка, plan, "")
+
+    без_суммы = billing.Started(
+        payment_url="u", external_id="e", plan=plan, amount=Decimal("590"), promo_code="KITAYAN"
+    )
+    assert "странице оплаты" in link_text(без_суммы, plan, "")
+
+
+def test_кнопка_промокода_в_предложении():
+    from app.bot.keyboards.subscription import offer_keyboard
+
+    markup = offer_keyboard([(_plan(), "590", "₽")])
+    assert markup.inline_keyboard[-1][0].callback_data == "sub:promo"
+
+
+def test_промокоды_видны_в_списке_партнёров():
+    p = партнёр()
+    текст = render_partners([p], {p.id: [промо(partner=p)], None: [промо("FREE", active=False)]})
+    assert "<code>KITAYAN</code>" in текст
+    assert "<s>FREE</s>" in текст
+    assert "lava.top" in текст
+
+
+@pytest.mark.asyncio
+async def test_неоплаченный_счёт_с_промокодом_отдаётся_повторно():
+    """lava.top тратит код на почту уже при выставлении: второй счёт она отвергнет."""
+
+    class Сессия(FakeBillingSession):
+        async def execute(self, statement, params=None):
+            if "payments.promo_code" in str(statement):
+                return type(
+                    "R",
+                    (),
+                    {"first": lambda self: ("old-1", {"paymentUrl": "https://pay/old-1"}, 494.1)},
+                )()
+            return await super().execute(statement, params)
+
+    provider = FakeInvoiceProvider()
+    plan = _plan()
+    user = _user()
+    user.email = "client@example.com"
+    user.promo_code = "KITAYAN"
+    session = Сессия(plan=plan, user_id=user.id)
+
+    import app.core.services.billing as mod
+
+    было = mod.get_payments
+    mod.get_payments = lambda: provider
+    try:
+        started = await billing.start_payment(session, user, plan)
+    finally:
+        mod.get_payments = было
+
+    assert provider.kwargs == {}  # к платёжке не ходили
+    assert started.payment_url == "https://pay/old-1"
+    assert started.amount == Decimal("494.1")

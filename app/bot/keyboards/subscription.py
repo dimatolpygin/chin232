@@ -10,6 +10,8 @@ from app.db.models import Plan
 SUB_PREFIX = "sub"
 # Начать оплату: выставить счёт и отдать ссылку.
 SUB_PAY = "pay"
+# Ввести промокод: следующее сообщение юзера читается как код.
+SUB_PROMO = "promo"
 
 
 def parse_subscription_action(data: str) -> tuple[str, str] | None:
@@ -39,10 +41,12 @@ def _button(plan: Plan, price: str, currency: str) -> InlineKeyboardButton:
 
 
 def offer_keyboard(plans: list[tuple[Plan, str, str]]) -> InlineKeyboardMarkup:
-    """Экран предложения: по кнопке на каждый доступный способ оплаты."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[_button(plan, price, currency)] for plan, price, currency in plans]
+    """Экран предложения: по кнопке на каждый способ оплаты и ввод промокода."""
+    rows = [[_button(plan, price, currency)] for plan, price, currency in plans]
+    rows.append(
+        [InlineKeyboardButton(text=ru.BTN_PROMO, callback_data=f"{SUB_PREFIX}:{SUB_PROMO}")]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def payment_keyboard(url: str) -> InlineKeyboardMarkup:

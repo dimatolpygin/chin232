@@ -12,6 +12,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,6 +56,10 @@ class Started:
     payment_url: str
     external_id: str
     plan: Plan
+    # Сумма из счёта платёжки. С промокодом она меньше цены тарифа, и юзеру
+    # показываем именно её: скидку считает платёжка, а не мы.
+    amount: Decimal | None = None
+    promo_code: str | None = None
 
 
 @dataclass(slots=True)
@@ -130,6 +135,11 @@ async def start_payment(session: AsyncSession, user: User, plan: Plan) -> Starte
     if not user.email:
         raise BillingError("у пользователя нет почты")
 
+    if user.promo_code:
+        reused = await _reuse_promo_invoice(session, user, plan)
+        if reused is not None:
+            return reused
+
     provider = get_payments()
     link = get_settings().bot_link
     invoice = await provider.create_invoice(
@@ -146,9 +156,15 @@ async def start_payment(session: AsyncSession, user: User, plan: Plan) -> Starte
         successful_return_url=link,
         failure_return_url=link,
         cancel_return_url=link,
+        # Скидку по коду считает сама платёжка: код заведён в её кабинете.
+        promoCode=user.promo_code,
     )
 
-    if invoice.amount is not None and abs(float(invoice.amount) - float(plan.price)) > 0.01:
+    if (
+        not user.promo_code
+        and invoice.amount is not None
+        and abs(float(invoice.amount) - float(plan.price)) > 0.01
+    ):
         # Цену показываем свою, а списывает платёжка свою. Расхождение — это
         # обманутый юзер, поэтому оно обязано быть видно в логах сразу.
         log.warning(
@@ -165,6 +181,7 @@ async def start_payment(session: AsyncSession, user: User, plan: Plan) -> Starte
             external_id=invoice.external_id,
             plan_code=plan.code,
             partner_id=user.partner_id,
+            promo_code=user.promo_code,
             amount=invoice.amount if invoice.amount is not None else plan.price,
             currency=invoice.currency or plan.currency,
             status=PAY_PENDING,
@@ -187,11 +204,66 @@ async def start_payment(session: AsyncSession, user: User, plan: Plan) -> Starte
         контракт=invoice.external_id,
         сумма=float(invoice.amount) if invoice.amount is not None else float(plan.price),
         валюта=invoice.currency or plan.currency,
+        промокод=user.promo_code,
         ссылка_есть=bool(invoice.payment_url),
     )
     if not invoice.payment_url:
         raise BillingError("платёжка не вернула ссылку на оплату")
-    return Started(payment_url=invoice.payment_url, external_id=invoice.external_id, plan=plan)
+    return Started(
+        payment_url=invoice.payment_url,
+        external_id=invoice.external_id,
+        plan=plan,
+        amount=Decimal(str(invoice.amount)) if invoice.amount is not None else None,
+        promo_code=user.promo_code,
+    )
+
+
+# Сколько живёт неоплаченный счёт с промокодом, который отдаём повторно.
+PROMO_INVOICE_REUSE = timedelta(hours=24)
+
+
+async def _reuse_promo_invoice(session: AsyncSession, user: User, plan: Plan) -> Started | None:
+    """Свежий неоплаченный счёт с тем же промокодом, если он есть.
+
+    Код в lava.top применяется один раз на почту, и тратит его уже выставленный
+    счёт, даже неоплаченный — проверено вживую 12.10: второй счёт с тем же
+    кодом и почтой платёжка отвергает с «Usage limit exceeded». Поэтому юзеру,
+    который закрыл страницу оплаты и нажал «оплатить» ещё раз, отдаём прежнюю
+    ссылку, а не просим новый счёт.
+    """
+    row = (
+        await session.execute(
+            select(Payment.external_id, Payment.raw, Payment.amount)
+            .where(
+                Payment.user_id == user.id,
+                Payment.plan_code == plan.code,
+                Payment.promo_code == user.promo_code,
+                Payment.status == PAY_PENDING,
+                Payment.created_at > datetime.now(UTC) - PROMO_INVOICE_REUSE,
+            )
+            .order_by(Payment.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None
+    external_id, raw, amount = row
+    url = raw.get("paymentUrl") if isinstance(raw, dict) else None
+    if not url:
+        return None
+    log.info(
+        "отдан прежний счёт с промокодом",
+        user_id=str(user.id),
+        контракт=external_id,
+        промокод=user.promo_code,
+    )
+    return Started(
+        payment_url=url,
+        external_id=external_id,
+        plan=plan,
+        amount=Decimal(str(amount)) if amount is not None else None,
+        promo_code=user.promo_code,
+    )
 
 
 async def _find_user_id(session: AsyncSession, event: PaymentEvent) -> uuid.UUID | None:

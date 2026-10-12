@@ -85,8 +85,11 @@ from app.core.services.partners import (
     list_partners,
     normalize_code,
     partner_link,
+    promos_by_partner,
     save_partner,
+    save_promo,
     set_active,
+    set_promo_active,
 )
 from app.core.services.stats import load_spending, load_summary
 from app.db.models import User
@@ -314,7 +317,81 @@ async def cmd_partner_toggle(
     )
 
 
-@router.message(Command("admin_add", "admin_del", "partner_add", "partner_off", "partner_on"))
+@router.message(Command("promo_add"), AdminFilter())
+async def cmd_promo_add(
+    message: Message, command: CommandObject, session: AsyncSession, user: User
+) -> None:
+    """`/promo_add КОД [код_партнёра]`: привязать код скидки из lava.top к партнёру."""
+    части = (command.args or "").split()
+    if not части or len(части) > 2:
+        await message.answer(ru.ADMIN_PROMO_USAGE)
+        return
+    try:
+        promo, partner, заведён = await save_promo(
+            session, части[0], части[1] if len(части) > 1 else None
+        )
+    except PartnerError as exc:
+        await message.answer(ru.ADMIN_PROMO_BAD.get(str(exc), ru.ADMIN_PROMO_USAGE))
+        return
+
+    await message.answer(
+        ru.ADMIN_PROMO_SAVED.format(
+            code=esc(promo.code),
+            action="заведён" if заведён else "обновлён",
+            partner=ru.ADMIN_PROMO_FOR.format(name=esc(partner.name)) if partner else "",
+        )
+    )
+    await track(
+        session,
+        "promo_saved",
+        user_id=user.id,
+        промокод=promo.code,
+        партнёр=partner.code if partner else None,
+    )
+    log.warning(
+        "промокод заведён" if заведён else "промокод перепривязан",
+        user_id=str(user.id),
+        промокод=promo.code,
+        партнёр=partner.code if partner else None,
+        кем=message.from_user.id,
+    )
+
+
+@router.message(Command("promo_off", "promo_on"), AdminFilter())
+async def cmd_promo_toggle(
+    message: Message, command: CommandObject, session: AsyncSession, user: User
+) -> None:
+    включить = command.command == "promo_on"
+    if not command.args:
+        await message.answer(ru.ADMIN_PROMO_TOGGLE_USAGE)
+        return
+    promo = await set_promo_active(session, command.args, включить)
+    if promo is None:
+        await message.answer(ru.ADMIN_PROMO_UNKNOWN)
+        return
+    шаблон = ru.ADMIN_PROMO_ON_DONE if включить else ru.ADMIN_PROMO_OFF_DONE
+    await message.answer(шаблон.format(code=esc(promo.code)))
+    await track(session, "promo_toggled", user_id=user.id, промокод=promo.code, активен=включить)
+    log.warning(
+        "промокод включён" if включить else "промокод отключён",
+        user_id=str(user.id),
+        промокод=promo.code,
+        кем=message.from_user.id,
+    )
+
+
+@router.message(
+    Command(
+        "admin_add",
+        "admin_del",
+        "partner_add",
+        "partner_off",
+        "partner_on",
+        "promo_add",
+        "promo_off",
+        "promo_on",
+    )
+)
 async def cmd_admin_grant_denied(message: Message, session: AsyncSession, user: User) -> None:
     """Чужому — то же молчание, что и на `/admin`."""
     await track(session, "admin_denied", user_id=user.id, telegram_id=message.from_user.id)
@@ -370,7 +447,8 @@ async def _show_load(callback: CallbackQuery, session: AsyncSession, queue, hour
 
 async def _show_partners(callback: CallbackQuery, session: AsyncSession) -> None:
     partners = await list_partners(session)
-    await _redraw(callback, render_partners(partners), partners_keyboard(partners))
+    promos = await promos_by_partner(session)
+    await _redraw(callback, render_partners(partners, promos), partners_keyboard(partners))
 
 
 async def _show_partner(callback: CallbackQuery, session: AsyncSession, value: str) -> None:

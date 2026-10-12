@@ -42,6 +42,8 @@ class User(Base):
         nullable=True,
         index=True,
     )
+    # Введённый промокод: уходит в каждый счёт юзера, пока платёжка его принимает.
+    promo_code: Mapped[str | None] = mapped_column(String(36), nullable=True)
     tz: Mapped[str] = mapped_column(
         String(64), nullable=False, default="Europe/Moscow", server_default="Europe/Moscow"
     )

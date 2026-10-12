@@ -136,6 +136,9 @@ class Payment(Base):
         nullable=True,
         index=True,
     )
+    # Промокод, с которым выставлен счёт. Продление идёт по той же подписке
+    # lava.top, поэтому код у него не пишется: скидку там решает платёжка.
+    promo_code: Mapped[str | None] = mapped_column(String(36), nullable=True)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=PAY_PENDING)

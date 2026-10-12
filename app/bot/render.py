@@ -400,17 +400,30 @@ def _sums(values: dict) -> str:
     )
 
 
-def render_partners(partners: list) -> str:
-    строки = [
-        ru.ADMIN_PARTNERS_ROW.format(
+def _codes(promos: list) -> str:
+    """Коды через запятую; отключённые зачёркнуты, чтобы их не раздали по ошибке."""
+    return ", ".join(
+        f"<code>{esc(p.code)}</code>" if p.active else f"<s>{esc(p.code)}</s>" for p in promos
+    )
+
+
+def render_partners(partners: list, promos: dict | None = None) -> str:
+    promos = promos or {}
+    строки = []
+    for partner in partners:
+        строка = ru.ADMIN_PARTNERS_ROW.format(
             name=esc(partner.name),
             percent=_percent(partner.percent),
             off="" if partner.active else ru.ADMIN_PARTNERS_OFF,
             link=partner_link(partner.code),
         )
-        for partner in partners
-    ]
-    return ru.ADMIN_PARTNERS.format(list="\n".join(строки) or ru.ADMIN_PARTNERS_EMPTY)
+        if promos.get(partner.id):
+            строка += ru.ADMIN_PARTNERS_PROMO.format(codes=_codes(promos[partner.id]))
+        строки.append(строка)
+    текст = "\n".join(строки) or ru.ADMIN_PARTNERS_EMPTY
+    if promos.get(None):
+        текст += ru.ADMIN_PARTNERS_PROMO_FREE.format(codes=_codes(promos[None]))
+    return ru.ADMIN_PARTNERS.format(list=текст) + ru.ADMIN_PROMO_HELP
 
 
 def render_partner_report(report: Report) -> str:

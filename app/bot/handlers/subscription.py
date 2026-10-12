@@ -7,13 +7,14 @@ from decimal import Decimal
 
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.subscription import (
     SUB_PAY,
     SUB_PREFIX,
+    SUB_PROMO,
     offer_keyboard,
     parse_subscription_action,
     payment_keyboard,
@@ -26,12 +27,14 @@ from app.core.providers.base import ProviderError
 from app.core.services.billing import (
     DEFAULT_PLAN,
     BillingError,
+    Started,
     active_subscription,
     get_plan,
     payable_plans,
     start_payment,
 )
 from app.core.services.limits import KIND_CHECK, KIND_MESSAGE, get_limits, limit_for, user_zone
+from app.core.services.partners import apply_promo, drop_promo
 from app.db.models import Plan, User
 from app.db.models.billing import SUB_CANCELLED
 from app.logging import get_logger
@@ -55,6 +58,21 @@ EMAIL_ONLY = "-"
 
 def email_key(user: User) -> str:
     return get_settings().redis_key("await_email", str(user.id))
+
+
+def promo_key(user: User) -> str:
+    return get_settings().redis_key("await_promo", str(user.id))
+
+
+# Ждём промокод недолго и одну попытку: иначе реплика разговора, сказанная
+# после кнопки, съедалась бы как неверный код.
+PROMO_WAIT_SEC = 600
+
+# Как платёжка отвечает про код, в документации нет; тексты сняты вживую
+# 12.10: незаведённый код — «Promo code not found», код, уже применённый с
+# этой почтой, — «Usage limit exceeded» (лимит в lava.top — раз на почту).
+PROMO_NOT_FOUND_MARK = "promo code"
+PROMO_USED_MARK = "usage limit"
 
 
 def money(value: Decimal | float | int) -> str:
@@ -97,15 +115,18 @@ async def show_subscription(message: Message, session: AsyncSession, user: User)
     # Развилку про СБП показываем, только когда выбирать действительно есть из
     # чего: пока заказчик не завёл разовый товар, тариф в списке один.
     template = ru.SUBSCRIPTION_OFFER if len(plans) > 1 else ru.SUBSCRIPTION_OFFER_SINGLE
+    text = template.format(
+        title=main.title,
+        free_messages=messages_limit,
+        free_checks=checks_limit,
+        price=money(main.price),
+        currency=currency_sign(main.currency),
+        days=main.duration_days,
+    )
+    if user.promo_code:
+        text += ru.PROMO_ACTIVE_LINE.format(code=esc(user.promo_code))
     await message.answer(
-        template.format(
-            title=main.title,
-            free_messages=messages_limit,
-            free_checks=checks_limit,
-            price=money(main.price),
-            currency=currency_sign(main.currency),
-            days=main.duration_days,
-        ),
+        text,
         reply_markup=offer_keyboard(
             [(plan, money(plan.price), currency_sign(plan.currency)) for plan in plans]
         ),
@@ -158,18 +179,39 @@ async def _send_invoice(
             await message.answer(ru.SUBSCRIPTION_EMAIL_REJECTED)
             await track(session, "email_rejected", user_id=user.id, тариф=plan.code)
             return
+        body = (exc.body or "").lower()
+        if user.promo_code and (PROMO_NOT_FOUND_MARK in body or PROMO_USED_MARK in body):
+            # Код не заведён в кабинете платёжки или уже применён с этой
+            # почтой. Снимаем его, иначе каждая попытка оплатить падала бы
+            # одинаково, а оплатить по обычной цене было бы нечем.
+            code = user.promo_code
+            used = PROMO_USED_MARK in body
+            await drop_promo(session, user, "уже применён с этой почтой" if used else "не найден")
+            template = ru.PROMO_USED_BY_EMAIL if used else ru.PROMO_REJECTED_BY_PROVIDER
+            await message.answer(template.format(code=esc(code)))
+            await show_subscription(message, session, user)
+            return
         await message.answer(ru.SUBSCRIPTION_ERROR)
         return
 
     note = ru.LINK_NOTE_CARD if plan.autorenew else ru.LINK_NOTE_SBP.format(days=plan.duration_days)
     await message.answer(
-        ru.SUBSCRIPTION_LINK.format(
-            price=money(plan.price),
-            currency=currency_sign(plan.currency),
-            note=note,
-        ),
+        link_text(started, plan, note),
         reply_markup=payment_keyboard(started.payment_url),
     )
+
+
+def link_text(started: Started, plan: Plan, note: str) -> str:
+    """Текст под ссылкой. С промокодом сумма — из счёта платёжки, а не из тарифа."""
+    currency = currency_sign(plan.currency)
+    if not started.promo_code:
+        return ru.SUBSCRIPTION_LINK.format(price=money(plan.price), currency=currency, note=note)
+    code = esc(started.promo_code)
+    if started.amount is not None and started.amount < plan.price:
+        return ru.SUBSCRIPTION_LINK_PROMO.format(
+            price=money(started.amount), currency=currency, code=code, note=note
+        )
+    return ru.SUBSCRIPTION_LINK_PROMO_UNKNOWN.format(code=code, note=note)
 
 
 async def _plan_or_default(session: AsyncSession, code: str) -> Plan | None:
@@ -211,6 +253,13 @@ async def on_subscription_action(
     callback: CallbackQuery, session: AsyncSession, user: User, queue
 ) -> None:
     parsed = parse_subscription_action(callback.data or "")
+    if parsed is not None and parsed[0] == SUB_PROMO:
+        await callback.answer()
+        await queue.set(promo_key(user), "1", ex=PROMO_WAIT_SEC)
+        await callback.message.answer(ru.PROMO_ASK)
+        await track(session, "promo_asked", user_id=user.id)
+        log.info("запрошен промокод", user_id=str(user.id))
+        return
     if parsed is None or parsed[0] != SUB_PAY:
         await callback.answer()
         return
@@ -232,6 +281,36 @@ async def on_subscription_action(
         await _ask_email(callback.message, user, queue, plan)
         return
     await _send_invoice(callback.message, session, user, plan, queue)
+
+
+@router.message(Command("promo"))
+async def cmd_promo(
+    message: Message, command: CommandObject, session: AsyncSession, user: User, queue
+) -> None:
+    """`/promo КОД` — ввести код сразу, без кнопки. Без кода — спросить."""
+    if not command.args:
+        await queue.set(promo_key(user), "1", ex=PROMO_WAIT_SEC)
+        await message.answer(ru.PROMO_ASK)
+        return
+    await _take_promo(message, session, user, command.args)
+
+
+async def _take_promo(message: Message, session: AsyncSession, user: User, raw: str) -> None:
+    applied = await apply_promo(session, user, raw)
+    if not applied.ok:
+        await message.answer(ru.PROMO_BAD)
+        return
+    await message.answer(ru.PROMO_OK.format(code=esc(applied.code)))
+    await show_subscription(message, session, user)
+
+
+@router.message(F.text & ~F.text.startswith("/"))
+async def on_promo(message: Message, session: AsyncSession, user: User, queue) -> None:
+    """Промокод в ответ на кнопку. Ждём одну попытку, дальше — снова разговор."""
+    if not await queue.get(promo_key(user)):
+        raise SkipHandler
+    await queue.delete(promo_key(user))
+    await _take_promo(message, session, user, message.text or "")
 
 
 @router.message(F.text & ~F.text.startswith("/"))

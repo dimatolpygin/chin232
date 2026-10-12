@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Numeric, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,3 +37,24 @@ class Partner(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Partner {self.code} {self.percent}%>"
+
+
+class PromoCode(Base):
+    """Промокод скидки. Саму скидку считает lava.top: код заводится в её кабинете,
+    бот только передаёт его в счёт (`promoCode`) и засчитывает оплату партнёру.
+    """
+
+    __tablename__ = "promo_codes"
+
+    # Как в кабинете платёжки: латиница в верхнем регистре, цифры, `_` и `-`.
+    code: Mapped[str] = mapped_column(String(36), primary_key=True)
+    partner_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("partners.id", ondelete="SET NULL"), nullable=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<PromoCode {self.code}>"

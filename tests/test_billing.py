@@ -513,7 +513,8 @@ def test_кнопка_тарифа_несёт_свой_код():
     разовый = _once_plan()
     markup = offer_keyboard([(подписка, "549", "₽"), (разовый, "549", "₽")])
     коды = [row[0].callback_data for row in markup.inline_keyboard]
-    assert коды == ["sub:pay:monthly", "sub:pay:once30"]
+    # Последней идёт кнопка промокода (этап 12).
+    assert коды == ["sub:pay:monthly", "sub:pay:once30", "sub:promo"]
 
     тексты = [row[0].text for row in markup.inline_keyboard]
     assert "Картой" in тексты[0]

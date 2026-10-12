@@ -15,7 +15,7 @@ from app.core.providers.base import EVENT_CANCELLED, EVENT_FAILED, EVENT_PAID
 from app.core.providers.payments.lavatop import LavaTopPayments
 from app.core.services import billing
 from app.core.services import limits as lim
-from app.db.models import Plan, Subscription, User
+from app.db.models import Partner, Plan, Subscription, User
 from app.db.models.billing import PAY_COMPLETED, SUB_ACTIVE
 
 BASE = {
@@ -96,9 +96,15 @@ class FakeBillingSession:
     «второй раз не продлевает» было бы не на чем.
     """
 
-    def __init__(self, plan: Plan | None = None, user_id: uuid.UUID | None = None) -> None:
+    def __init__(
+        self,
+        plan: Plan | None = None,
+        user_id: uuid.UUID | None = None,
+        partner: Partner | None = None,
+    ) -> None:
         self.plan = plan
         self.user_id = user_id
+        self.partner = partner
         # external_id -> статус платежа
         self.payments: dict[str, str] = {}
         self.subscription: Subscription | None = None
@@ -117,6 +123,9 @@ class FakeBillingSession:
 
     async def scalar(self, statement):
         sql = str(statement)
+        # Партнёр юзера: запрос тоже упоминает users.id, поэтому проверяется первым.
+        if "FROM partners" in sql:
+            return self.partner
         if "payments.user_id" in sql or "subscriptions.user_id" in sql or "users.id" in sql:
             return self.user_id
         if "payments.plan_code" in sql:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, Filter
+from aiogram.filters import Command, CommandObject, Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message, TelegramObject
@@ -23,6 +23,8 @@ from app.bot.keyboards.admin import (
     SECTION_LIMITS,
     SECTION_LOAD,
     SECTION_NOOP,
+    SECTION_PARTNER,
+    SECTION_PARTNERS,
     SECTION_PLAN,
     SECTION_PRICE,
     SECTION_SEND,
@@ -35,15 +37,20 @@ from app.bot.keyboards.admin import (
     limits_keyboard,
     load_keyboard,
     parse_admin_action,
+    partner_keyboard,
+    partners_keyboard,
     plan_keyboard,
     price_keyboard,
     segments_keyboard,
     spend_keyboard,
 )
 from app.bot.render import (
+    esc,
     plural,
     render_limits,
     render_load,
+    render_partner_report,
+    render_partners,
     render_price,
     render_spending,
     render_stats,
@@ -69,6 +76,18 @@ from app.core.services.admin import (
 from app.core.services.backup import backup_status
 from app.core.services.limits import get_limits
 from app.core.services.load import load_report
+from app.core.services.partners import (
+    PERIOD_ALL,
+    PERIODS,
+    PartnerError,
+    build_report,
+    find_partner,
+    list_partners,
+    normalize_code,
+    partner_link,
+    save_partner,
+    set_active,
+)
 from app.core.services.stats import load_spending, load_summary
 from app.db.models import User
 from app.logging import get_logger
@@ -229,7 +248,73 @@ async def cmd_admin_del(message: Message, session: AsyncSession, user: User) -> 
     )
 
 
-@router.message(Command("admin_add", "admin_del"))
+# --- партнёры -------------------------------------------------------------------
+
+
+@router.message(Command("partner_add"), AdminFilter())
+async def cmd_partner_add(message: Message, session: AsyncSession, user: User) -> None:
+    """`/partner_add код процент Имя`: завести партнёра или поправить его условия."""
+    части = (message.text or "").split(maxsplit=3)
+    if len(части) < 4:
+        await message.answer(ru.ADMIN_PARTNER_USAGE)
+        return
+    _, код, процент, имя = части
+    try:
+        partner, заведён = await save_partner(session, код, процент, имя)
+    except PartnerError as exc:
+        await message.answer(ru.ADMIN_PARTNER_BAD.get(str(exc), ru.ADMIN_PARTNER_USAGE))
+        return
+
+    шаблон = ru.ADMIN_PARTNER_CREATED if заведён else ru.ADMIN_PARTNER_UPDATED
+    await message.answer(
+        шаблон.format(
+            name=esc(partner.name),
+            percent=f"{float(partner.percent):g}",
+            link=partner_link(partner.code),
+        )
+    )
+    await track(
+        session,
+        "partner_saved",
+        user_id=user.id,
+        партнёр=partner.code,
+        процент=float(partner.percent),
+        новый=заведён,
+    )
+    log.warning(
+        "партнёр заведён" if заведён else "условия партнёра изменены",
+        user_id=str(user.id),
+        партнёр=partner.code,
+        имя=partner.name,
+        процент=float(partner.percent),
+        кем=message.from_user.id,
+    )
+
+
+@router.message(Command("partner_off", "partner_on"), AdminFilter())
+async def cmd_partner_toggle(
+    message: Message, command: CommandObject, session: AsyncSession, user: User
+) -> None:
+    включить = command.command == "partner_on"
+    if not command.args:
+        await message.answer(ru.ADMIN_PARTNER_TOGGLE_USAGE)
+        return
+    partner = await set_active(session, command.args, включить)
+    if partner is None:
+        await message.answer(ru.ADMIN_PARTNER_UNKNOWN)
+        return
+    шаблон = ru.ADMIN_PARTNER_ON_DONE if включить else ru.ADMIN_PARTNER_OFF_DONE
+    await message.answer(шаблон.format(name=esc(partner.name)))
+    await track(session, "partner_toggled", user_id=user.id, партнёр=partner.code, активен=включить)
+    log.warning(
+        "партнёр включён" if включить else "партнёр отключён",
+        user_id=str(user.id),
+        партнёр=partner.code,
+        кем=message.from_user.id,
+    )
+
+
+@router.message(Command("admin_add", "admin_del", "partner_add", "partner_off", "partner_on"))
 async def cmd_admin_grant_denied(message: Message, session: AsyncSession, user: User) -> None:
     """Чужому — то же молчание, что и на `/admin`."""
     await track(session, "admin_denied", user_id=user.id, telegram_id=message.from_user.id)
@@ -281,6 +366,24 @@ async def _show_load(callback: CallbackQuery, session: AsyncSession, queue, hour
     """
     load = await load_report(session, hours=hours, queue=queue)
     await _redraw(callback, render_load(load, await backup_status()), load_keyboard(hours))
+
+
+async def _show_partners(callback: CallbackQuery, session: AsyncSession) -> None:
+    partners = await list_partners(session)
+    await _redraw(callback, render_partners(partners), partners_keyboard(partners))
+
+
+async def _show_partner(callback: CallbackQuery, session: AsyncSession, value: str) -> None:
+    """Отчёт по партнёру. `value` — `<код>.<период>`, битое — назад к списку."""
+    код, _, период = value.partition(".")
+    код = normalize_code(код)
+    partner = await find_partner(session, код) if код else None
+    if partner is None:
+        await _show_partners(callback, session)
+        return
+    период = период if период in PERIODS else PERIOD_ALL
+    report = await build_report(session, partner, период)
+    await _redraw(callback, render_partner_report(report), partner_keyboard(partner.code, период))
 
 
 async def _show_segments(callback: CallbackQuery, session: AsyncSession) -> None:
@@ -352,6 +455,14 @@ async def on_admin_action(
 
     if action.section == SECTION_ADMINS:
         await _show_admins(callback, session)
+        return
+
+    if action.section == SECTION_PARTNERS:
+        await _show_partners(callback, session)
+        return
+
+    if action.section == SECTION_PARTNER:
+        await _show_partner(callback, session, action.value)
         return
 
     if action.section == SECTION_BROADCAST:

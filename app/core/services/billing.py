@@ -26,7 +26,7 @@ from app.core.providers.base import (
     PaymentEvent,
 )
 from app.core.providers.registry import get_payments
-from app.db.models import Payment, Plan, Subscription, User
+from app.db.models import Partner, Payment, Plan, Subscription, User
 from app.db.models.billing import (
     PAY_CANCELLED,
     PAY_COMPLETED,
@@ -164,6 +164,7 @@ async def start_payment(session: AsyncSession, user: User, plan: Plan) -> Starte
             provider=provider.name,
             external_id=invoice.external_id,
             plan_code=plan.code,
+            partner_id=user.partner_id,
             amount=invoice.amount if invoice.amount is not None else plan.price,
             currency=invoice.currency or plan.currency,
             status=PAY_PENDING,
@@ -233,12 +234,17 @@ async def _record_payment(
     условии в `DO UPDATE`: уже оплаченный контракт второй раз не обновится, а
     значит и подписку не продлит. Проверка и запись — один запрос, поэтому две
     одновременные доставки вебхука не разъедутся.
+
+    Партнёр берётся снимком у юзера при вставке. Автопродление приходит новым
+    контрактом, то есть новой строкой, — и тоже засчитывается партнёру. У уже
+    записанной строки партнёр не трогается: он был снят при выставлении счёта.
     """
     row = await session.execute(
         text(
             "INSERT INTO payments (id, user_id, provider, external_id, parent_external_id, "
-            "plan_code, amount, currency, status, raw, paid_at) "
+            "plan_code, partner_id, amount, currency, status, raw, paid_at) "
             "VALUES (gen_random_uuid(), :user_id, :provider, :external_id, :parent, :plan_code, "
+            "(SELECT partner_id FROM users WHERE id = :user_id), "
             ":amount, :currency, :status, CAST(:raw AS jsonb), :paid_at) "
             "ON CONFLICT (provider, external_id) DO UPDATE SET "
             "status = EXCLUDED.status, raw = EXCLUDED.raw, paid_at = EXCLUDED.paid_at, "
@@ -371,6 +377,20 @@ async def apply_event(session: AsyncSession, event: PaymentEvent, provider: str)
             продление=event.recurring,
             действует_до=expires.isoformat(),
         )
+        partner = await session.scalar(
+            select(Partner).join(User, User.partner_id == Partner.id).where(User.id == user_id)
+        )
+        if partner is not None:
+            log.info(
+                "оплата засчитана партнёру",
+                user_id=str(user_id),
+                партнёр=partner.code,
+                процент=float(partner.percent),
+                контракт=event.external_id,
+                сумма=event.amount,
+                валюта=event.currency,
+                продление=event.recurring,
+            )
         log.info(
             "деньги получены, подписка активна",
             user_id=str(user_id),

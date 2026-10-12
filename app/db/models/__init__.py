@@ -5,6 +5,7 @@ from app.db.models.daily_usage import DailyUsage
 from app.db.models.dialog import Dialog
 from app.db.models.event import Event
 from app.db.models.identity import Identity
+from app.db.models.partner import Partner
 from app.db.models.prompt import Prompt
 from app.db.models.pronunciation import PronunciationCheck
 from app.db.models.service_call import ServiceCall
@@ -16,6 +17,7 @@ __all__ = [
     "Dialog",
     "Event",
     "Identity",
+    "Partner",
     "Payment",
     "Plan",
     "Prompt",

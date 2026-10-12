@@ -639,3 +639,57 @@ ADMIN_DEL_DONE = "🔑 {who} больше не админ."
 ADMIN_DEL_FIXED = "{who} прописан в конфиге сервера — из бота убрать нельзя, правьте ADMIN_IDS."
 
 BTN_ADMIN_ADMINS = "🔑 Доступ"
+
+# --- партнёры ------------------------------------------------------------------
+
+BTN_ADMIN_PARTNERS = "🤝 Партнёры"
+
+# Список партнёров: у каждого ссылка, которую админ отдаёт блогеру как есть.
+ADMIN_PARTNERS = (
+    "🤝 <b>Партнёры</b>\n\n{list}\n\n"
+    "Юзер закрепляется за партнёром, если впервые пришёл в бота по его ссылке. "
+    "Процент считается со всех его оплат, включая автопродления. "
+    "Выплаты бот не делает, только считает.\n\n"
+    "Завести или поправить: <code>/partner_add код процент Имя</code>\n"
+    "например <code>/partner_add laoshi 20 Иван Петров</code>\n"
+    "Отключить: <code>/partner_off код</code> · включить: <code>/partner_on код</code>"
+)
+ADMIN_PARTNERS_EMPTY = "Партнёров пока нет."
+ADMIN_PARTNERS_ROW = "• <b>{name}</b> · {percent}%{off}\n  <code>{link}</code>"
+ADMIN_PARTNERS_OFF = " · отключён"
+
+ADMIN_PARTNER_REPORT = (
+    "🤝 <b>{name}</b> · {percent}%{off} · {period}\n\n"
+    "Пришли по ссылке: <b>{users}</b>\n"
+    "Оплатили: <b>{paid_users}</b>\n"
+    "Оплат: <b>{payments}</b> на <b>{revenue}</b>\n"
+    "Причитается партнёру: <b>{due}</b>\n\n"
+    "Ссылка: <code>{link}</code>"
+)
+ADMIN_PARTNER_NONE = "0"
+PARTNER_PERIODS = {"all": "всё время", "month": "этот месяц", "prev": "прошлый месяц"}
+
+ADMIN_PARTNER_USAGE = (
+    "Формат: <code>/partner_add код процент Имя</code>\n"
+    "например <code>/partner_add laoshi 20 Иван Петров</code>"
+)
+ADMIN_PARTNER_BAD = {
+    "code": "Код — от 2 до 32 знаков: латиница, цифры, «_» и «-». Он попадёт в ссылку.",
+    "percent": "Процент — число от 0 до 100, например 20 или 12.5.",
+    "name": "Не хватает имени партнёра после процента.",
+}
+ADMIN_PARTNER_CREATED = (
+    "🤝 Партнёр <b>{name}</b> заведён, {percent}%.\n\nСсылка для него:\n<code>{link}</code>"
+)
+ADMIN_PARTNER_UPDATED = (
+    "🤝 Партнёр <b>{name}</b> обновлён, {percent}%.\n\nСсылка:\n<code>{link}</code>"
+)
+ADMIN_PARTNER_TOGGLE_USAGE = (
+    "Чей код? <code>/partner_off код</code> или <code>/partner_on код</code>"
+)
+ADMIN_PARTNER_UNKNOWN = "Партнёра с таким кодом нет. Список — в /admin → «Партнёры»."
+ADMIN_PARTNER_OFF_DONE = (
+    "Партнёр <b>{name}</b> отключён: новых по его ссылке больше не закрепляем, "
+    "история оплат в отчёте осталась."
+)
+ADMIN_PARTNER_ON_DONE = "Партнёр <b>{name}</b> снова включён."

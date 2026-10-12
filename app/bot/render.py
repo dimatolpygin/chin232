@@ -15,6 +15,7 @@ from app.core.providers.pronunciation.speechsuper import LOW_INTEGRITY
 from app.core.services.backup import BackupStatus
 from app.core.services.limits import KIND_CHECK, Limits, Quota
 from app.core.services.load import BUDGET_SEC, Load
+from app.core.services.partners import Report, partner_link
 from app.core.services.progress import Progress
 from app.core.services.pronunciation import AssessResult, CharResult, PracticeTarget
 from app.core.services.stats import Spend, Summary
@@ -381,3 +382,48 @@ def render_load(load: Load, backup: BackupStatus | None = None) -> str:
     if backup is not None:
         блоки.append(render_backup(backup))
     return "\n\n".join(блоки)
+
+
+# --- партнёры ------------------------------------------------------------------
+
+
+def _percent(value) -> str:
+    """20.00 → «20», 12.50 → «12.5»: нули после запятой в процентах — шум."""
+    return f"{float(value):g}"
+
+
+def _sums(values: dict) -> str:
+    if not values:
+        return ru.ADMIN_PARTNER_NONE
+    return " · ".join(
+        f"{float(amount):,.0f} {cur}".replace(",", " ") for cur, amount in values.items()
+    )
+
+
+def render_partners(partners: list) -> str:
+    строки = [
+        ru.ADMIN_PARTNERS_ROW.format(
+            name=esc(partner.name),
+            percent=_percent(partner.percent),
+            off="" if partner.active else ru.ADMIN_PARTNERS_OFF,
+            link=partner_link(partner.code),
+        )
+        for partner in partners
+    ]
+    return ru.ADMIN_PARTNERS.format(list="\n".join(строки) or ru.ADMIN_PARTNERS_EMPTY)
+
+
+def render_partner_report(report: Report) -> str:
+    partner = report.partner
+    return ru.ADMIN_PARTNER_REPORT.format(
+        name=esc(partner.name),
+        percent=_percent(partner.percent),
+        off="" if partner.active else ru.ADMIN_PARTNERS_OFF,
+        period=ru.PARTNER_PERIODS.get(report.period, report.period),
+        users=report.users,
+        paid_users=report.paid_users,
+        payments=report.payments,
+        revenue=_sums(report.revenue),
+        due=_sums(report.due),
+        link=partner_link(partner.code),
+    )

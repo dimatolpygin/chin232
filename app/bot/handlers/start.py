@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,13 +25,15 @@ log = get_logger("bot")
 @router.message(CommandStart())
 async def cmd_start(
     message: Message,
+    command: CommandObject,
     session: AsyncSession,
     user: User,
     is_new_user: bool,
     queue,
     request_id: str,
 ) -> None:
-    result = await handle_start(session, user, is_new_user)
+    # Параметр ссылки (`?start=ref_<код>`) разбирает сервис: хендлер его только передаёт.
+    result = await handle_start(session, user, is_new_user, command.args)
     if result.need_level:
         await message.answer(ru.WELCOME, reply_markup=hsk_keyboard())
     else:

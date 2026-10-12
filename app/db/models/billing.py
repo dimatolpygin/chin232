@@ -128,6 +128,14 @@ class Payment(Base):
     external_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     plan_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Снимок партнёра юзера на момент платежа: отчёт партнёру считается по нему,
+    # и правка закрепления задним числом историю денег не переписывает.
+    partner_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("partners.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=PAY_PENDING)

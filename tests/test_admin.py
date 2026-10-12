@@ -405,6 +405,7 @@ def test_в_главном_меню_есть_все_разделы():
         ru.BTN_ADMIN_BROADCAST,
         ru.BTN_ADMIN_ADMINS,
         ru.BTN_ADMIN_LOAD,
+        ru.BTN_ADMIN_PARTNERS,
     }
 
 

@@ -21,6 +21,7 @@ from app.core.services.admin import (
     current_value,
 )
 from app.core.services.limits import Limits
+from app.core.services.partners import PERIOD_ALL, PERIODS
 
 ADM_PREFIX = "adm"
 
@@ -34,6 +35,8 @@ SECTION_SPEND = "spend"
 SECTION_LOAD = "load"
 SECTION_BROADCAST = "cast"
 SECTION_ADMINS = "who"
+SECTION_PARTNERS = "ptn"
+SECTION_PARTNER = "pt"
 SECTION_SEND = "send"
 SECTION_CANCEL = "cancel"
 # Кнопка-табличка со значением: нажимать её незачем, но и молчать она не должна.
@@ -97,9 +100,39 @@ def admin_menu() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=ru.BTN_ADMIN_BROADCAST, callback_data=_cb(SECTION_BROADCAST)),
             InlineKeyboardButton(text=ru.BTN_ADMIN_ADMINS, callback_data=_cb(SECTION_ADMINS)),
         ],
-        [InlineKeyboardButton(text=ru.BTN_ADMIN_LOAD, callback_data=_cb(SECTION_LOAD, 24))],
+        [
+            InlineKeyboardButton(text=ru.BTN_ADMIN_LOAD, callback_data=_cb(SECTION_LOAD, 24)),
+            InlineKeyboardButton(text=ru.BTN_ADMIN_PARTNERS, callback_data=_cb(SECTION_PARTNERS)),
+        ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def partners_keyboard(partners: list) -> InlineKeyboardMarkup:
+    """Партнёр на кнопку: нажал — отчёт за всё время."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{partner.name} · {partner.code}",
+                callback_data=_cb(SECTION_PARTNER, f"{partner.code}.{PERIOD_ALL}"),
+            )
+        ]
+        for partner in partners
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows + [_back(SECTION_MENU)])
+
+
+def partner_keyboard(code: str, period: str) -> InlineKeyboardMarkup:
+    # Период едет третьим полем, а не числом-шагом: `parse_admin_action`
+    # разбирает четвёртое поле как число, а третье отдаёт строкой.
+    row = [
+        InlineKeyboardButton(
+            text=("✅ " if p == period else "") + ru.PARTNER_PERIODS[p],
+            callback_data=_cb(SECTION_PARTNER, f"{code}.{p}"),
+        )
+        for p in PERIODS
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[row, _back(SECTION_PARTNERS)])
 
 
 def admins_keyboard() -> InlineKeyboardMarkup:

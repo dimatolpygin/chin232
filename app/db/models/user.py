@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, String, func
+from sqlalchemy import DateTime, Float, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,6 +34,14 @@ class User(Base):
     # Почта нужна платёжке: счёт выставляется на неё, туда же уходит чек.
     # Спрашивается один раз перед первой оплатой, для разговора не нужна.
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    # Партнёр, по чьей ссылке юзер пришёл. Ставится один раз, при первом входе,
+    # и потом не меняется: иначе чужая ссылка переманивала бы чужих юзеров.
+    partner_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("partners.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     tz: Mapped[str] = mapped_column(
         String(64), nullable=False, default="Europe/Moscow", server_default="Europe/Moscow"
     )
